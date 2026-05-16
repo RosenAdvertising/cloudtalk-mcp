@@ -1,5 +1,11 @@
 # cloudtalk-mcp
 
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-F59E0B.svg)](https://opensource.org/licenses/MIT)
+[![15 tools](https://img.shields.io/badge/tools-15-22C55E.svg)](https://github.com/RosenAdvertising/cloudtalk-mcp)
+[![MCP](https://img.shields.io/badge/MCP-compatible-7C3AED.svg)](https://modelcontextprotocol.io)
+[![CloudTalk](https://img.shields.io/badge/CloudTalk-API-6C4FE8.svg)](https://www.cloudtalk.io)
+
 MCP server for CloudTalk — call center management, agents, contacts, and analytics for law firms.
 
 ## Tools (15)
