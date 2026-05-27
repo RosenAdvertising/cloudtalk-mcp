@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Interactive setup — prompts for CloudTalk API credentials and saves them."""
 
-import os
 import sys
 from pathlib import Path
 
@@ -28,10 +27,7 @@ def main():
 
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
-    env_content = (
-        f"CLOUDTALK_KEY_ID={key_id}\n"
-        f"CLOUDTALK_KEY_SECRET={key_secret}\n"
-    )
+    env_content = f"CLOUDTALK_KEY_ID={key_id}\n" f"CLOUDTALK_KEY_SECRET={key_secret}\n"
     ENV_FILE.write_text(env_content)
     ENV_FILE.chmod(0o600)
 
@@ -42,6 +38,7 @@ def main():
     # Verify immediately after saving
     try:
         from cloudtalk_mcp.setup.verify import run_verify
+
         run_verify()
     except Exception as exc:
         print(f"Verification failed: {exc}", file=sys.stderr)

@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-import base64, json, os, sys, time, requests
+import base64
+import os
+import sys
+import time
+import requests
 from pathlib import Path
 
 BASE_URL = "https://my.cloudtalk.io/api"
@@ -153,7 +157,9 @@ class CloudTalkClient:
             body["email"] = email
         return self.post("/contacts", body=body)
 
-    def update_contact(self, contact_id, first_name="", last_name="", phone="", email=""):
+    def update_contact(
+        self, contact_id, first_name="", last_name="", phone="", email=""
+    ):
         body = {}
         if first_name:
             body["first_name"] = first_name
