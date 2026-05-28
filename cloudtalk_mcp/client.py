@@ -3,10 +3,13 @@ import base64
 import os
 import sys
 import time
+from typing import Any
+
 import requests
 from pathlib import Path
 
 BASE_URL = "https://my.cloudtalk.io/api"
+ANALYTICS_BASE_URL = "https://analytics-api.cloudtalk.io/api"
 CONFIG_DIR = Path.home() / ".cloudtalk-mcp"
 
 
@@ -58,14 +61,25 @@ class CloudTalkClient:
             }
         )
 
-    def _url(self, path):
+    def _url(self, path: str) -> str:
+        """Build a my.cloudtalk.io API URL. Appends .json if not already present."""
         clean = path.lstrip("/")
         if not clean.endswith(".json"):
             clean = clean + ".json"
         return f"{BASE_URL}/{clean}"
 
-    def _request(self, method, path, params=None, json_body=None, _rate_retries=0):
-        url = self._url(path)
+    def _analytics_url(self, path: str) -> str:
+        """Build an analytics-api.cloudtalk.io URL (no .json suffix)."""
+        return f"{ANALYTICS_BASE_URL}/{path.lstrip('/')}"
+
+    def _request(
+        self,
+        method: str,
+        url: str,
+        params: dict[str, Any] | None = None,
+        json_body: Any = None,
+        _rate_retries: int = 0,
+    ) -> Any:
         resp = self.session.request(method, url, params=params, json=json_body)
         if resp.status_code == 401:
             raise RuntimeError(
@@ -77,7 +91,7 @@ class CloudTalkClient:
             time.sleep(wait)
             return self._request(
                 method,
-                path,
+                url,
                 params=params,
                 json_body=json_body,
                 _rate_retries=_rate_retries + 1,
@@ -90,116 +104,107 @@ class CloudTalkClient:
             )
         return _json_response(resp)
 
-    def get(self, path, params=None):
-        return self._request("GET", path, params=params)
+    def get(self, path: str, params: dict[str, Any] | None = None) -> Any:
+        return self._request("GET", self._url(path), params=params)
 
-    def post(self, path, body=None):
-        return self._request("POST", path, json_body=body)
+    def post(self, path: str, body: Any = None) -> Any:
+        return self._request("POST", self._url(path), json_body=body)
 
-    def put(self, path, body=None):
-        return self._request("PUT", path, json_body=body)
+    def put(self, path: str, body: Any = None) -> Any:
+        return self._request("PUT", self._url(path), json_body=body)
 
-    def delete(self, path):
-        return self._request("DELETE", path)
+    def delete(self, path: str) -> Any:
+        return self._request("DELETE", self._url(path))
 
-    # --- Account ---
+    # --- Identity ---
 
-    def get_account(self):
-        return self.get("/accounts")
+    def who_am_i(self) -> dict:
+        """Return account identity by pulling the first agent from the account."""
+        resp = self.list_agents(page=1, limit=1)
+        data = resp.get("responseData", resp)
+        items = data.get("data", [])
+        agent = items[0].get("Agent", items[0]) if items else {}
+        return {
+            "account": "CloudTalk",
+            "agent_email": agent.get("email", "unknown"),
+            "agent_name": f"{agent.get('firstname', '')} {agent.get('lastname', '')}".strip(),
+            "agent_id": agent.get("id"),
+            "total_agents": data.get("itemsCount"),
+        }
 
     # --- Agents ---
 
     def list_agents(self, page=1, limit=25):
-        return self.get("/agents", params={"page": page, "limit": limit})
-
-    def get_agent(self, agent_id):
-        return self.get(f"/agents/{agent_id}")
+        return self.get("/agents/index", params={"page": page, "limit": limit})
 
     # --- Calls ---
 
     def list_calls(self, page=1, limit=25, date_from="", date_to="", status=""):
-        params = {"page": page, "limit": limit}
+        params: dict[str, Any] = {"page": page, "limit": limit}
         if date_from:
             params["date_from"] = date_from
         if date_to:
             params["date_to"] = date_to
         if status:
             params["status"] = status
-        return self.get("/calls", params=params)
+        return self.get("/calls/index", params=params)
 
     def get_call(self, call_id):
-        return self.get(f"/calls/{call_id}")
+        """Get comprehensive call details from the analytics API."""
+        url = self._analytics_url(f"calls/{call_id}")
+        return self._request("GET", url)
 
-    def initiate_call(self, agent_id, to_number, caller_id=""):
-        body = {"agent_id": agent_id, "to": to_number}
-        if caller_id:
-            body["caller_id"] = caller_id
-        return self.post("/calls", body=body)
+    def initiate_call(self, agent_id, callee_number):
+        body = {"agent_id": agent_id, "callee_number": callee_number}
+        return self.post("/calls/create", body=body)
 
     # --- Contacts ---
 
     def list_contacts(self, page=1, limit=25, query=""):
-        params = {"page": page, "limit": limit}
+        params: dict[str, Any] = {"page": page, "limit": limit}
         if query:
-            params["search"] = query
-        return self.get("/contacts", params=params)
+            params["keyword"] = query
+        return self.get("/contacts/index", params=params)
 
     def get_contact(self, contact_id):
-        return self.get(f"/contacts/{contact_id}")
+        return self.get(f"/contacts/show/{contact_id}")
 
     def create_contact(self, first_name, last_name="", phone="", email=""):
-        body = {"first_name": first_name}
-        if last_name:
-            body["last_name"] = last_name
+        # API requires a single `name` field; phone/email are array sub-objects.
+        name = f"{first_name} {last_name}".strip() if last_name else first_name
+        body: dict = {"name": name}
         if phone:
-            body["phone"] = phone
+            body["ContactNumber"] = [{"public_number": phone}]
         if email:
-            body["email"] = email
-        return self.post("/contacts", body=body)
+            body["ContactEmail"] = [{"email": email}]
+        return self.put("/contacts/add", body=body)
 
     def update_contact(
         self, contact_id, first_name="", last_name="", phone="", email=""
     ):
-        body = {}
-        if first_name:
-            body["first_name"] = first_name
-        if last_name:
-            body["last_name"] = last_name
+        body: dict = {}
+        # name is required by the API; build from whichever name parts were given.
+        name_parts = [p for p in [first_name, last_name] if p]
+        if name_parts:
+            body["name"] = " ".join(name_parts)
         if phone:
-            body["phone"] = phone
+            body["ContactNumber"] = [{"public_number": phone}]
         if email:
-            body["email"] = email
-        return self.put(f"/contacts/{contact_id}", body=body)
+            body["ContactEmail"] = [{"email": email}]
+        if not body:
+            return {"success": True, "message": "No fields to update"}
+        return self.post(f"/contacts/edit/{contact_id}", body=body)
 
     def delete_contact(self, contact_id):
-        return self.delete(f"/contacts/{contact_id}")
+        return self.delete(f"/contacts/delete/{contact_id}")
 
     # --- Numbers ---
 
     def list_numbers(self, page=1, limit=25):
-        return self.get("/numbers", params={"page": page, "limit": limit})
-
-    def get_number(self, number_id):
-        return self.get(f"/numbers/{number_id}")
+        return self.get("/numbers/index", params={"page": page, "limit": limit})
 
     # --- Statistics ---
 
-    def get_call_statistics(self, date_from="", date_to="", agent_id=0):
-        params = {}
-        if date_from:
-            params["date_from"] = date_from
-        if date_to:
-            params["date_to"] = date_to
-        if agent_id:
-            params["agent_id"] = agent_id
-        return self.get("/statistics/calls", params=params if params else None)
-
-    def get_agent_statistics(self, date_from="", date_to="", agent_id=0):
-        params = {}
-        if date_from:
-            params["date_from"] = date_from
-        if date_to:
-            params["date_to"] = date_to
-        if agent_id:
-            params["agent_id"] = agent_id
-        return self.get("/statistics/agents", params=params if params else None)
+    def get_call_statistics(self):
+        """Return real-time group statistics (answered/unanswered calls, abandon rate, etc.)."""
+        return self.get("/statistics/realtime/groups")

@@ -1,0 +1,25 @@
+tools:
+  - name: who_am_i
+    read_write: read
+  - name: list_agents
+    read_write: read
+  - name: list_calls
+    read_write: read
+  - name: get_call
+    read_write: read
+  - name: initiate_call
+    read_write: write
+  - name: list_contacts
+    read_write: read
+  - name: get_contact
+    read_write: read
+  - name: create_contact
+    read_write: write
+  - name: update_contact
+    read_write: write
+  - name: delete_contact
+    read_write: write
+  - name: list_numbers
+    read_write: read
+  - name: get_call_statistics
+    read_write: read

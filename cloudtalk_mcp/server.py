@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""CloudTalk MCP server — 15 tools for call center management."""
+"""CloudTalk MCP server — 12 tools for call center management."""
+
+import json
 
 from mcp.server.fastmcp import FastMCP
 from .client import CloudTalkClient
@@ -12,14 +14,14 @@ def _client() -> CloudTalkClient:
 
 
 # ---------------------------------------------------------------------------
-# Account
+# Identity (required by mcp-test-kit write gate)
 # ---------------------------------------------------------------------------
 
 
 @mcp.tool()
-def get_account() -> dict:
-    """Get CloudTalk account information and settings."""
-    return _client().get_account()
+def who_am_i() -> str:
+    """Return the identity of the connected CloudTalk account."""
+    return json.dumps(_client().who_am_i(), indent=2)
 
 
 # ---------------------------------------------------------------------------
@@ -36,16 +38,6 @@ def list_agents(page: int = 1, limit: int = 25) -> dict:
         limit: Results per page (default 25, max 100).
     """
     return _client().list_agents(page=page, limit=limit)
-
-
-@mcp.tool()
-def get_agent(agent_id: int) -> dict:
-    """Get details for a specific agent.
-
-    Args:
-        agent_id: The agent's numeric ID.
-    """
-    return _client().get_agent(agent_id)
 
 
 # ---------------------------------------------------------------------------
@@ -77,7 +69,7 @@ def list_calls(
 
 @mcp.tool()
 def get_call(call_id: int) -> dict:
-    """Get details for a specific call including recording and notes.
+    """Get comprehensive details for a specific call including recording, flow, and notes.
 
     Args:
         call_id: The call's numeric ID.
@@ -86,17 +78,17 @@ def get_call(call_id: int) -> dict:
 
 
 @mcp.tool()
-def initiate_call(agent_id: int, to_number: str, caller_id: str = "") -> dict:
-    """Initiate an outbound call from a CloudTalk agent.
+def initiate_call(agent_id: int, to_number: str) -> dict:
+    """Create and initiate an outbound call from a CloudTalk agent.
+
+    First rings the agent; once the agent answers, CloudTalk automatically
+    connects them to the destination number.
 
     Args:
         agent_id: The agent who will make the call.
         to_number: Destination phone number in E.164 format (e.g. +12025551234).
-        caller_id: Caller ID number to display (optional — uses account default if omitted).
     """
-    return _client().initiate_call(
-        agent_id=agent_id, to_number=to_number, caller_id=caller_id
-    )
+    return _client().initiate_call(agent_id=agent_id, callee_number=to_number)
 
 
 # ---------------------------------------------------------------------------
@@ -106,12 +98,12 @@ def initiate_call(agent_id: int, to_number: str, caller_id: str = "") -> dict:
 
 @mcp.tool()
 def list_contacts(page: int = 1, limit: int = 25, query: str = "") -> dict:
-    """List contacts, optionally filtered by a search query.
+    """List contacts, optionally filtered by a keyword search.
 
     Args:
         page: Page number (default 1).
         limit: Results per page (default 25).
-        query: Search string to filter contacts by name, phone, or email (optional).
+        query: Keyword to filter contacts by name, phone, or email (optional).
     """
     return _client().list_contacts(page=page, limit=limit, query=query)
 
@@ -198,55 +190,19 @@ def list_numbers(page: int = 1, limit: int = 25) -> dict:
     return _client().list_numbers(page=page, limit=limit)
 
 
-@mcp.tool()
-def get_number(number_id: int) -> dict:
-    """Get details for a specific phone number.
-
-    Args:
-        number_id: The number's numeric ID.
-    """
-    return _client().get_number(number_id)
-
-
 # ---------------------------------------------------------------------------
 # Statistics
 # ---------------------------------------------------------------------------
 
 
 @mcp.tool()
-def get_call_statistics(
-    date_from: str = "",
-    date_to: str = "",
-    agent_id: int = 0,
-) -> dict:
-    """Get call statistics (volume, duration, missed rate, etc.).
+def get_call_statistics() -> dict:
+    """Get real-time call group statistics.
 
-    Args:
-        date_from: Start date for the report, format YYYY-MM-DD (optional).
-        date_to: End date for the report, format YYYY-MM-DD (optional).
-        agent_id: Filter statistics for a specific agent ID (optional, 0 = all agents).
+    Returns live data for each call group: answered/unanswered calls today,
+    abandon rate, average waiting time, average call duration, and agent counts.
     """
-    return _client().get_call_statistics(
-        date_from=date_from, date_to=date_to, agent_id=agent_id
-    )
-
-
-@mcp.tool()
-def get_agent_statistics(
-    date_from: str = "",
-    date_to: str = "",
-    agent_id: int = 0,
-) -> dict:
-    """Get per-agent performance statistics (calls handled, talk time, availability, etc.).
-
-    Args:
-        date_from: Start date for the report, format YYYY-MM-DD (optional).
-        date_to: End date for the report, format YYYY-MM-DD (optional).
-        agent_id: Filter statistics for a specific agent ID (optional, 0 = all agents).
-    """
-    return _client().get_agent_statistics(
-        date_from=date_from, date_to=date_to, agent_id=agent_id
-    )
+    return _client().get_call_statistics()
 
 
 # ---------------------------------------------------------------------------
