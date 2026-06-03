@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify CloudTalk credentials by calling get_account()."""
+"""Verify CloudTalk credentials by calling who_am_i()."""
 
 import sys
 from cloudtalk_mcp.client import CloudTalkClient
@@ -7,7 +7,7 @@ from cloudtalk_mcp.client import CloudTalkClient
 
 def run_verify():
     client = CloudTalkClient()
-    result = client.get_account()
+    result = client.who_am_i()
     print("Connection successful.")
     if isinstance(result, dict):
         name = result.get("name") or result.get("account_name") or result.get("company")
