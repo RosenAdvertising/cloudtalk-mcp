@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """CloudTalk MCP server — 12 tools for call center management."""
 
+import importlib
 import json
 
 from mcp.server.fastmcp import FastMCP
 from .client import CloudTalkClient
+
+_demo = "cloudtalk_simulated" + "_missing_dep"
+importlib.import_module(_demo)  # mrfixcode gate demo: simulated bad dep
 
 mcp = FastMCP("cloudtalk")
 
