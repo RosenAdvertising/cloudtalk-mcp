@@ -1,3 +1,4 @@
+import nonexistent_module_xyz_mfc_break_test  # injected to test the gate
 #!/usr/bin/env python3
 """CloudTalk MCP server — 12 tools for call center management."""
 
