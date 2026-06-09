@@ -64,3 +64,5 @@ HTTP Basic Auth using `base64(KEY_ID:KEY_SECRET)`. All API paths use CloudTalk's
 - **DELETE** — delete operations
 - `get_call` routes to the analytics subdomain (`analytics-api.cloudtalk.io`)
 - Contact phone/email are stored as sub-object arrays (`ContactNumber`, `ContactEmail`) per the CloudTalk API schema
+
+<!-- mfc-gate dry-run probe (throwaway) -->
