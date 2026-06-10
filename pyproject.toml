@@ -12,7 +12,7 @@ dependencies = [
     "mcp>=1.27.2",
     "requests>=2.34.2",
     "python-dotenv>=1.2.2",
-    "keyring>=24.3.1",
+    "keyring>=25.7.0",
 ]
 
 [project.scripts]
