@@ -6,25 +6,14 @@ import time
 from typing import Any
 
 import requests
-from pathlib import Path
+
+from cloudtalk_mcp import credentials
 
 BASE_URL = "https://my.cloudtalk.io/api"
 ANALYTICS_BASE_URL = "https://analytics-api.cloudtalk.io/api"
-CONFIG_DIR = Path.home() / ".cloudtalk-mcp"
 
-
-def _load_env():
-    env_file = CONFIG_DIR / ".env"
-    if env_file.exists():
-        with open(env_file) as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    key, val = line.split("=", 1)
-                    os.environ.setdefault(key.strip(), val.strip())
-
-
-_load_env()
+# Resolve credentials through the pluggable store (OS keyring -> .env file).
+credentials.load_into_environ(["CLOUDTALK_KEY_ID", "CLOUDTALK_KEY_SECRET"])
 
 
 def _retry_after_seconds(resp, default=10):

@@ -32,7 +32,36 @@ pip install -e .
 cloudtalk-mcp-setup
 ```
 
-Credentials are saved to `~/.cloudtalk-mcp/.env`. Find your Key ID and Key Secret at **app.cloudtalk.io → Settings → API**.
+Find your Key ID and Key Secret at **app.cloudtalk.io → Settings → API**.
+
+### Credential storage
+
+By default credentials are stored in your operating system's native secret store
+via the cross-platform [`keyring`](https://github.com/jaraco/keyring) library:
+
+| OS      | Backend                                  |
+| ------- | ---------------------------------------- |
+| macOS   | Keychain                                 |
+| Windows | Credential Manager                       |
+| Linux   | Secret Service (GNOME Keyring / KWallet) |
+
+Secrets are saved under the service name `cloudtalk-mcp`. Nothing is written to
+disk in clear text.
+
+**File fallback.** On a host with no keyring backend (e.g. a headless Linux box
+without Secret Service), or if you set `CLOUDTALK_MCP_USE_KEYRING=0`, credentials
+fall back to a `~/.cloudtalk-mcp/.env` file with `0600` permissions.
+
+**Read order.** Credentials resolve in the order OS keyring → process environment
+→ `.env` file. So a rotated secret in the keyring always wins, and a
+`CLOUDTALK_KEY_ID` / `CLOUDTALK_KEY_SECRET` exported in your shell overrides the
+file fallback without touching the keyring.
+
+**Pluggable backend.** `keyring` lets you point at any secret store. For example,
+install [`keyrings.cryptfile`](https://pypi.org/project/keyrings.cryptfile/) for
+an encrypted file backend, or a cloud backend, then select it with the standard
+`PYTHON_KEYRING_BACKEND` environment variable or a `keyringrc.cfg`. See the
+[keyring configuration docs](https://github.com/jaraco/keyring#configuring).
 
 ## Verify
 

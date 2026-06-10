@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
 """Interactive setup — prompts for CloudTalk API credentials and saves them."""
 
+import os
 import sys
-from pathlib import Path
 
-
-CONFIG_DIR = Path.home() / ".cloudtalk-mcp"
-ENV_FILE = CONFIG_DIR / ".env"
+from cloudtalk_mcp import credentials
 
 
 def main():
@@ -25,14 +23,18 @@ def main():
         print("Error: Key Secret cannot be empty.", file=sys.stderr)
         sys.exit(1)
 
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    backend = credentials.set_secret("CLOUDTALK_KEY_ID", key_id)
+    credentials.set_secret("CLOUDTALK_KEY_SECRET", key_secret)
 
-    env_content = f"CLOUDTALK_KEY_ID={key_id}\n" f"CLOUDTALK_KEY_SECRET={key_secret}\n"
-    ENV_FILE.write_text(env_content)
-    ENV_FILE.chmod(0o600)
+    # Make the just-entered values visible to the in-process verify() below.
+    os.environ["CLOUDTALK_KEY_ID"] = key_id
+    os.environ["CLOUDTALK_KEY_SECRET"] = key_secret
 
     print()
-    print(f"Credentials saved to {ENV_FILE}")
+    if backend == "keyring":
+        print(f"Credentials saved to the OS keyring ({credentials.storage_backend()}).")
+    else:
+        print(f"Credentials saved to {credentials.ENV_FILE} (0600).")
     print()
 
     # Verify immediately after saving
