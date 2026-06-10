@@ -206,6 +206,92 @@ def get_call_statistics() -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Resources
+# ---------------------------------------------------------------------------
+
+
+@mcp.resource("cloudtalk://numbers", mime_type="application/json")
+def numbers_resource() -> str:
+    """All phone numbers assigned to this CloudTalk account — read-only reference data."""
+    return json.dumps(_client().list_numbers(limit=100), indent=2)
+
+
+@mcp.resource("cloudtalk://agents", mime_type="application/json")
+def agents_resource() -> str:
+    """All agents in this CloudTalk account — read-only reference data."""
+    return json.dumps(_client().list_agents(limit=100), indent=2)
+
+
+@mcp.resource("cloudtalk://security-notes", mime_type="text/markdown")
+def security_notes_resource() -> str:
+    """Security posture for cloudtalk-mcp.
+
+    ## Credentials
+    - **CLOUDTALK_API_KEY**: CloudTalk REST API key (Bearer token).
+    - Resolution order: OS keyring (macOS Keychain / libsecret) → process env →
+      `~/.cloudtalk-mcp/.env` (chmod 0600 fallback). Set via `cloudtalk-mcp-setup`.
+
+    ## Tool classification
+    - **Read-only (safe):** who_am_i, list_agents, list_calls, get_call,
+      list_contacts, get_contact, list_numbers, get_call_statistics.
+    - **Write / side-effect:** initiate_call, create_contact, update_contact,
+      delete_contact.
+
+    ## Data sensitivity
+    Call recordings and contact data may contain attorney-client privileged
+    communications. Handle under legal-privilege standards; do not store or
+    transmit call content outside firm-approved systems.
+    """
+    return security_notes_resource.__doc__ or ""
+
+
+# ---------------------------------------------------------------------------
+# Prompts
+# ---------------------------------------------------------------------------
+
+
+@mcp.prompt()
+def missed_call_review() -> str:
+    """Review missed calls for the day and recommend follow-up actions."""
+    return """You are a legal intake coordinator reviewing today's missed calls.
+
+1. Call list_calls with status='missed' to retrieve today's missed calls.
+2. For each missed call: call get_call to get caller details and any notes.
+3. Search list_contacts for matching phone numbers to identify known contacts.
+4. For unknown callers: flag as potential new client intake.
+5. Call get_call_statistics to see the overall missed-call rate for the day.
+6. Output a prioritized action list: Caller | Known Contact | Time | Recommended Action.
+7. Flag callers who have called more than once today as high-priority."""
+
+
+@mcp.prompt()
+def call_quality_review(call_id: str) -> str:
+    """Review call quality and content for a specific call."""
+    return f"""Review CloudTalk call {call_id} for quality and follow-up requirements:
+
+1. Call get_call({call_id}) — capture agent, duration, status, direction, and any notes.
+2. Identify the call type: new inquiry, existing client, or internal.
+3. If the call was answered: assess duration relative to typical intake length.
+4. If call was missed or abandoned: check if a contact record exists via list_contacts.
+5. Determine next action: callback required, contact record to create, escalation needed.
+6. Output: Call summary | Agent | Outcome | Next Action | Priority."""
+
+
+@mcp.prompt()
+def agent_performance_brief() -> str:
+    """Call volume and performance brief for all agents today."""
+    return """Generate a performance brief for all CloudTalk agents:
+
+1. Call list_agents to get the full agent roster.
+2. Call get_call_statistics to get current live statistics by call group.
+3. Call list_calls filtered to today to see answered vs missed by agent.
+4. For each agent: count calls handled, calculate average duration from call records.
+5. Cross-reference against get_call_statistics abandon rate and wait times.
+6. Output a table: Agent | Calls Handled | Missed | Avg Duration | Notes.
+7. Flag agents with zero calls today as potentially offline or unavailable."""
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
