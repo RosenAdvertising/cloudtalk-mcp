@@ -42,8 +42,8 @@ def main():
         from cloudtalk_mcp.setup.verify import run_verify
 
         run_verify()
-    except Exception as exc:
-        print(f"Verification failed: {exc}", file=sys.stderr)
+    except Exception:
+        print("Verification failed.", file=sys.stderr)
         print("Check your credentials and try again.", file=sys.stderr)
         sys.exit(1)
 

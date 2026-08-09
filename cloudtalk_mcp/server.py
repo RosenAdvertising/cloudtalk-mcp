@@ -2,11 +2,27 @@
 """CloudTalk MCP server — 12 tools for call center management."""
 
 import json
+from typing import Annotated
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
+from pydantic import Field
+
 from .client import CloudTalkClient
 
-mcp = FastMCP("cloudtalk")
+mcp = MCPServer("cloudtalk")
+
+PageNumber = Annotated[
+    int,
+    Field(ge=1, description="One-based CloudTalk API page number."),
+]
+ListLimit = Annotated[
+    int,
+    Field(
+        ge=1,
+        le=100,
+        description="Maximum number of records returned from the selected API page.",
+    ),
+]
 
 
 def _client() -> CloudTalkClient:
@@ -30,8 +46,8 @@ def who_am_i() -> str:
 
 
 @mcp.tool()
-def list_agents(page: int = 1, limit: int = 25) -> dict:
-    """List all agents in the CloudTalk account.
+def list_agents(page: PageNumber = 1, limit: ListLimit = 25) -> dict:
+    """List one page of agents, capped at limit records.
 
     Args:
         page: Page number (default 1).
@@ -47,8 +63,8 @@ def list_agents(page: int = 1, limit: int = 25) -> dict:
 
 @mcp.tool()
 def list_calls(
-    page: int = 1,
-    limit: int = 25,
+    page: PageNumber = 1,
+    limit: ListLimit = 25,
     date_from: str = "",
     date_to: str = "",
     status: str = "",
@@ -57,7 +73,7 @@ def list_calls(
 
     Args:
         page: Page number (default 1).
-        limit: Results per page (default 25).
+        limit: Maximum results returned from this page (default 25, max 100).
         date_from: Filter start date, format YYYY-MM-DD (optional).
         date_to: Filter end date, format YYYY-MM-DD (optional).
         status: Filter by call status e.g. answered, missed, voicemail (optional).
@@ -97,12 +113,16 @@ def initiate_call(agent_id: int, to_number: str) -> dict:
 
 
 @mcp.tool()
-def list_contacts(page: int = 1, limit: int = 25, query: str = "") -> dict:
-    """List contacts, optionally filtered by a keyword search.
+def list_contacts(
+    page: PageNumber = 1,
+    limit: ListLimit = 25,
+    query: str = "",
+) -> dict:
+    """List one page of contacts, capped at limit records.
 
     Args:
         page: Page number (default 1).
-        limit: Results per page (default 25).
+        limit: Maximum results returned from this page (default 25, max 100).
         query: Keyword to filter contacts by name, phone, or email (optional).
     """
     return _client().list_contacts(page=page, limit=limit, query=query)
@@ -180,12 +200,12 @@ def delete_contact(contact_id: int) -> dict:
 
 
 @mcp.tool()
-def list_numbers(page: int = 1, limit: int = 25) -> dict:
-    """List all phone numbers assigned to the CloudTalk account.
+def list_numbers(page: PageNumber = 1, limit: ListLimit = 25) -> dict:
+    """List one page of assigned phone numbers, capped at limit records.
 
     Args:
         page: Page number (default 1).
-        limit: Results per page (default 25).
+        limit: Maximum results returned from this page (default 25, max 100).
     """
     return _client().list_numbers(page=page, limit=limit)
 
@@ -212,13 +232,13 @@ def get_call_statistics() -> dict:
 
 @mcp.resource("cloudtalk://numbers", mime_type="application/json")
 def numbers_resource() -> str:
-    """All phone numbers assigned to this CloudTalk account — read-only reference data."""
+    """Up to 100 assigned phone numbers — read-only reference data."""
     return json.dumps(_client().list_numbers(limit=100), indent=2)
 
 
 @mcp.resource("cloudtalk://agents", mime_type="application/json")
 def agents_resource() -> str:
-    """All agents in this CloudTalk account — read-only reference data."""
+    """Up to 100 agents in this account — read-only reference data."""
     return json.dumps(_client().list_agents(limit=100), indent=2)
 
 
