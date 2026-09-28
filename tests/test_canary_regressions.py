@@ -8,7 +8,7 @@ from typing import Any, cast
 
 import pytest
 import requests
-from mcp.server.mcpserver.exceptions import ToolError
+from mcp.server.fastmcp.exceptions import ToolError
 
 from cloudtalk_mcp import server
 from cloudtalk_mcp.client import CloudTalkClient, _cap_response_data, _json_response
@@ -81,7 +81,7 @@ def _bare_client(response: FakeResponse | None = None) -> CloudTalkClient:
 
 def _tool_schemas() -> dict[str, dict[str, Any]]:
     return {
-        tool.name: tool.input_schema
+        tool.name: tool.inputSchema
         for tool in asyncio.run(server.mcp.list_tools())
         if tool.name in LIST_TOOLS
     }
