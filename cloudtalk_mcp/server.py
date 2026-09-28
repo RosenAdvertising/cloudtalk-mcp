@@ -4,12 +4,12 @@
 import json
 from typing import Annotated
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
 from pydantic import Field
 
 from .client import CloudTalkClient
 
-mcp = FastMCP("cloudtalk")
+mcp = MCPServer("cloudtalk")
 
 PageNumber = Annotated[
     int,
