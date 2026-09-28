@@ -1,33 +1,22 @@
 # MCP specification delta: 2025-11-25 to 2026-07-28
 
-Research date: 2026-08-09. Sources are limited to the official MCP
-specification, official MCP Python SDK documentation, and the proven
-`clio-mcp` fleet migration report supplied for this migration.
+This maps the protocol changes relevant to CloudTalk MCP. See the
+[official changelog](https://modelcontextprotocol.io/specification/2026-07-28/changelog)
+and [Python SDK migration guide](https://py.sdk.modelcontextprotocol.io/migration/).
 
-## Current target and migration release
+## Current implementation
 
-This repository targets MCP `2025-11-25` before migration:
-
-- `pyproject.toml` declares `mcp>=1.28.1,<2`, while `uv.lock` resolves MCP
-  Python SDK 1.28.1.
-- `cloudtalk_mcp/server.py` constructs the v1 `FastMCP` class and relies on the
-  SDK's default protocol negotiation.
-- The only configured transport is stdio through a parameterless `mcp.run()`.
-- The repository has no protocol guard or source test suite. The installed v1
-  SDK reports support through `2025-11-25`.
-
-The official changelog says `2026-07-28` follows `2025-11-25`
-([spec changelog](https://modelcontextprotocol.io/specification/2026-07-28/changelog)).
-The fleet's proven implementation release is MCP Python SDK `2.0.0`. The
-[official v1-to-v2 migration guide](https://py.sdk.modelcontextprotocol.io/migration/)
-documents the `FastMCP` to `MCPServer` rename, revised models, stricter wire
-validation, dual-era clients, and transport configuration changes used here.
+`pyproject.toml` requires `mcp>=2.2,<3`; `uv.lock` resolves `mcp` and
+`mcp-types` to `2.2.0`. The server constructs `MCPServer` and runs over
+stdio. The SDK negotiates `2026-07-28` by default and retains legacy
+`2025-11-25` negotiation. `tests/spec_check.py --mcp-only` guards the
+installed SDK revision, and `tests/test_spec_2026_07_28.py` covers the
+relevant wire behavior. The migration report lists reproducible checks.
 
 Verdicts below mean:
 
 - **AFFECTS-US**: this server exposes or relies on the changed surface. The SDK
-  may implement the wire behavior, but the migration must still pin, configure,
-  or test it.
+  implements some wire behavior, which the protocol tests cover.
 - **NOT-APPLICABLE**: the feature or transport direction is not implemented.
   This migration does not add it merely because the new revision permits it.
 
@@ -46,7 +35,7 @@ Verdicts below mean:
 
 | Normative change | Verdict | CloudTalk-specific reason |
 | --- | --- | --- |
-| Streamable HTTP POST requires `Mcp-Method`, plus `Mcp-Name` for named operations; `x-mcp-header` can map selected tool arguments to headers. [Source](https://modelcontextprotocol.io/specification/2026-07-28/changelog#minor-changes) | **NOT-APPLICABLE** | This repository has no HTTP application or Streamable HTTP entry point. The conformance suite still exercises the SDK's raw modern HTTP app so required routing-header behavior cannot regress unnoticed. |
+| Streamable HTTP POST requires `Mcp-Method`, plus `Mcp-Name` for named operations; `x-mcp-header` can map selected tool arguments to headers. [Source](https://modelcontextprotocol.io/specification/2026-07-28/changelog#minor-changes) | **NOT-APPLICABLE** | The product has no Streamable HTTP entry point. Protocol tests exercise an in-process SDK HTTP app and its routing headers. |
 | HTTP GET and resource subscribe/unsubscribe are replaced by `subscriptions/listen`. [Source](https://modelcontextprotocol.io/specification/2026-07-28/changelog#major-changes) | **AFFECTS-US** | The high-level server publishes tools, prompts, and resources and SDK v2 advertises SDK-managed list-change/resource-subscription declarations. The migration preserves those declarations without adding a publisher, event store, or custom subscription bus. |
 | SSE resumability and redelivery are removed. [Source](https://modelcontextprotocol.io/specification/2026-07-28/changelog#major-changes) | **NOT-APPLICABLE** | No HTTP/SSE transport or event store is configured. |
 | Legacy HTTP+SSE is formally deprecated. [Source](https://modelcontextprotocol.io/specification/2026-07-28/changelog#deprecated) | **NOT-APPLICABLE** | The server exposes stdio only. |
@@ -55,7 +44,7 @@ Verdicts below mean:
 
 | Normative change | Verdict | CloudTalk-specific reason |
 | --- | --- | --- |
-| `ClientCapabilities` and `ServerCapabilities` gain an `extensions` field. [Source](https://modelcontextprotocol.io/specification/2026-07-28/changelog#minor-changes) | **AFFECTS-US** | `server/discover` exposes capabilities. This migration must prove that no unused extension is advertised. |
+| `ClientCapabilities` and `ServerCapabilities` gain an `extensions` field. [Source](https://modelcontextprotocol.io/specification/2026-07-28/changelog#minor-changes) | **AFFECTS-US** | `server/discover` exposes capabilities. The protocol test checks that no unused extension is advertised. |
 | Experimental core tasks move to the `io.modelcontextprotocol/tasks` extension. [Source](https://modelcontextprotocol.io/specification/2026-07-28/changelog#major-changes) | **NOT-APPLICABLE** | The server has no task handlers or task-augmented tools. |
 | Roots, Sampling, and Logging are deprecated. [Source](https://modelcontextprotocol.io/specification/2026-07-28/changelog#deprecated) | **NOT-APPLICABLE** | None is declared or used. |
 | Sampling `includeContext` values `"thisServer"` and `"allServers"` are deprecated. [Source](https://modelcontextprotocol.io/specification/2026-07-28/changelog#deprecated) | **NOT-APPLICABLE** | Sampling is not used. |
@@ -65,8 +54,8 @@ Verdicts below mean:
 | Normative change | Verdict | CloudTalk-specific reason |
 | --- | --- | --- |
 | Tool, prompt, resource, resource-template list results and resource reads require `ttlMs` and `cacheScope`. [Source](https://modelcontextprotocol.io/specification/2026-07-28/changelog#minor-changes) | **AFFECTS-US** | CloudTalk exposes 12 tools, three prompts, three static resources, and an empty template list. Conservative SDK defaults (`ttlMs: 0`, `cacheScope: private`) avoid a new data-retention behavior. |
-| `tools/list` SHOULD be deterministic. [Source](https://modelcontextprotocol.io/specification/2026-07-28/changelog#minor-changes) | **AFFECTS-US** | Decorator registration order is stable and must be regression-tested across repeated listings. |
-| Tool schemas allow all JSON Schema 2020-12 keywords; `structuredContent` may be any JSON value, with defined `$ref` and composition limits. [Source](https://modelcontextprotocol.io/specification/2026-07-28/changelog#minor-changes) | **AFFECTS-US** | SDK v2 owns schema generation and validation. Existing dictionary tool results and generated object schemas must remain valid. |
+| `tools/list` SHOULD be deterministic. [Source](https://modelcontextprotocol.io/specification/2026-07-28/changelog#minor-changes) | **AFFECTS-US** | Decorator registration order is stable and the protocol test checks repeated listings. |
+| Tool schemas allow all JSON Schema 2020-12 keywords; `structuredContent` may be any JSON value, with defined `$ref` and composition limits. [Source](https://modelcontextprotocol.io/specification/2026-07-28/changelog#minor-changes) | **AFFECTS-US** | SDK v2 owns schema generation and validation. The tests check generated object schemas and existing dictionary tool results. |
 | Resource-not-found changes from `-32002` to JSON-RPC Invalid Params `-32602`. [Source](https://modelcontextprotocol.io/specification/2026-07-28/changelog#minor-changes) | **AFFECTS-US** | Unknown `cloudtalk://` resources must use the revised code. |
 | URL elicitation removes its completion notification and `elicitationId`; MRTR retries use application `requestState`. [Source](https://modelcontextprotocol.io/specification/2026-07-28/changelog#minor-changes) | **NOT-APPLICABLE** | The server performs no elicitation. |
 | Generated schema numeric `minimum`, `maximum`, and `default` types are corrected. [Source](https://modelcontextprotocol.io/specification/2026-07-28/changelog#other-schema-changes) | **NOT-APPLICABLE** | The repository does not vendor or directly validate against the generated MCP meta-schema. SDK v2 absorbs the correction. |

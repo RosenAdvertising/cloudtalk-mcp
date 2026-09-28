@@ -15,7 +15,7 @@ Requires Python MCP SDK >=2.2,<3; protocol revision 2026-07-28 is checked separa
 | Tool                  | Description                                         |
 | --------------------- | --------------------------------------------------- |
 | `who_am_i`            | Return identity of the connected CloudTalk account  |
-| `list_agents`         | List all agents                                     |
+| `list_agents`         | List one page of agents                             |
 | `list_calls`          | List calls with date/status filters                 |
 | `get_call`            | Get comprehensive call details including recording  |
 | `initiate_call`       | Place an outbound call from an agent                |
@@ -47,8 +47,8 @@ via the cross-platform [`keyring`](https://github.com/jaraco/keyring) library:
 | Windows | Credential Manager                       |
 | Linux   | Secret Service (GNOME Keyring / KWallet) |
 
-Secrets are saved under the service name `cloudtalk-mcp`. Nothing is written to
-disk in clear text.
+Secrets are saved under the service name `cloudtalk-mcp` when a usable keyring
+is available.
 
 **File fallback.** On a host with no keyring backend (e.g. a headless Linux box
 without Secret Service), or if you set `CLOUDTALK_MCP_USE_KEYRING=0`, credentials
