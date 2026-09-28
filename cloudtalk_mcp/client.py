@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import base64
+import logging
 import os
 import sys
 import time
@@ -11,9 +12,7 @@ from cloudtalk_mcp import credentials
 
 BASE_URL = "https://my.cloudtalk.io/api"
 ANALYTICS_BASE_URL = "https://analytics-api.cloudtalk.io/api"
-
-# Resolve credentials through the pluggable store (OS keyring -> .env file).
-credentials.load_into_environ(["CLOUDTALK_KEY_ID", "CLOUDTALK_KEY_SECRET"])
+logger = logging.getLogger(__name__)
 
 
 def _retry_after_seconds(resp, default=10):
@@ -27,24 +26,52 @@ def _json_response(resp):
     try:
         return resp.json()
     except ValueError:
-        raise RuntimeError(
-            f"CloudTalk API returned non-JSON ({resp.status_code}): {resp.text[:200]}"
+        logger.warning(
+            "cloudtalk_request_rejected reason=upstream_non_json status_code=%s",
+            resp.status_code,
         )
+        raise RuntimeError(
+            f"CloudTalk API returned non-JSON ({resp.status_code})"
+        ) from None
+
+
+def _cap_response_data(response: Any, limit: int) -> Any:
+    """Defensively cap a list response even if the upstream API over-returns."""
+    if not isinstance(response, dict):
+        return response
+
+    response_data = response.get("responseData")
+    if isinstance(response_data, dict) and isinstance(response_data.get("data"), list):
+        capped_response = dict(response)
+        capped_data = dict(response_data)
+        capped_data["data"] = response_data["data"][:limit]
+        capped_response["responseData"] = capped_data
+        return capped_response
+
+    if isinstance(response.get("data"), list):
+        capped_response = dict(response)
+        capped_response["data"] = response["data"][:limit]
+        return capped_response
+    return response
 
 
 class CloudTalkClient:
     def __init__(self):
+        # Resolve only when a client is needed; importing the MCP server must not
+        # consult keyring or the fallback credential file.
+        credentials.load_into_environ(["CLOUDTALK_KEY_ID", "CLOUDTALK_KEY_SECRET"])
         key_id = os.environ.get("CLOUDTALK_KEY_ID", "")
         key_secret = os.environ.get("CLOUDTALK_KEY_SECRET", "")
         if not key_id or not key_secret:
+            logger.warning("cloudtalk_request_rejected reason=credentials_missing")
             raise RuntimeError(
                 "CloudTalk credentials not found. Run: cloudtalk-mcp-setup"
             )
-        credentials = base64.b64encode(f"{key_id}:{key_secret}".encode()).decode()
+        basic_auth = base64.b64encode(f"{key_id}:{key_secret}".encode()).decode()
         self.session = requests.Session()
         self.session.headers.update(
             {
-                "Authorization": f"Basic {credentials}",
+                "Authorization": f"Basic {basic_auth}",
                 "Content-Type": "application/json",
                 "Accept": "application/json",
             }
@@ -69,8 +96,19 @@ class CloudTalkClient:
         json_body: Any = None,
         _rate_retries: int = 0,
     ) -> Any:
-        resp = self.session.request(method, url, params=params, json=json_body)
+        try:
+            resp = self.session.request(method, url, params=params, json=json_body)
+        except requests.RequestException as exc:
+            logger.warning(
+                "cloudtalk_request_rejected reason=transport_error exception_type=%s",
+                type(exc).__name__,
+            )
+            raise RuntimeError("CloudTalk API request failed") from None
         if resp.status_code == 401:
+            logger.warning(
+                "cloudtalk_request_rejected reason=upstream_unauthorized "
+                "status_code=401"
+            )
             raise RuntimeError(
                 "CloudTalk credentials invalid. Run: cloudtalk-mcp-setup"
             )
@@ -88,9 +126,11 @@ class CloudTalkClient:
         if resp.status_code == 204:
             return {"success": True}
         if not resp.ok:
-            raise RuntimeError(
-                f"CloudTalk API error {resp.status_code}: {resp.text[:400]}"
+            logger.warning(
+                "cloudtalk_request_rejected reason=upstream_error status_code=%s",
+                resp.status_code,
             )
+            raise RuntimeError(f"CloudTalk API error {resp.status_code}")
         return _json_response(resp)
 
     def get(self, path: str, params: dict[str, Any] | None = None) -> Any:
@@ -124,7 +164,8 @@ class CloudTalkClient:
     # --- Agents ---
 
     def list_agents(self, page=1, limit=25):
-        return self.get("/agents/index", params={"page": page, "limit": limit})
+        response = self.get("/agents/index", params={"page": page, "limit": limit})
+        return _cap_response_data(response, limit)
 
     # --- Calls ---
 
@@ -136,7 +177,8 @@ class CloudTalkClient:
             params["date_to"] = date_to
         if status:
             params["status"] = status
-        return self.get("/calls/index", params=params)
+        response = self.get("/calls/index", params=params)
+        return _cap_response_data(response, limit)
 
     def get_call(self, call_id):
         """Get comprehensive call details from the analytics API."""
@@ -153,7 +195,8 @@ class CloudTalkClient:
         params: dict[str, Any] = {"page": page, "limit": limit}
         if query:
             params["keyword"] = query
-        return self.get("/contacts/index", params=params)
+        response = self.get("/contacts/index", params=params)
+        return _cap_response_data(response, limit)
 
     def get_contact(self, contact_id):
         return self.get(f"/contacts/show/{contact_id}")
@@ -190,7 +233,8 @@ class CloudTalkClient:
     # --- Numbers ---
 
     def list_numbers(self, page=1, limit=25):
-        return self.get("/numbers/index", params={"page": page, "limit": limit})
+        response = self.get("/numbers/index", params={"page": page, "limit": limit})
+        return _cap_response_data(response, limit)
 
     # --- Statistics ---
 
