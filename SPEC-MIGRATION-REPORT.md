@@ -1,10 +1,8 @@
 # MCP 2026-07-28 migration report
 
-> Integration status on `v2-2026-09-28`: this report describes the isolated
-> `spec-2026-07-28` branch. The merged branch preserves main's
-> `mcp>=1.28.1,<2` requirement and resolves MCP 1.30.0. Its MCP 2026-07-28
-> protocol suite remains a failing gate until the SDK compatibility conflict
-> is resolved.
+> This report describes the isolated `spec-2026-07-28` branch. On
+> `v2-2026-09-28`, the round 2 integration now requires `mcp>=2.2,<3`, locks
+> MCP 2.2.0, and passes the full 32-test suite and protocol guard.
 
 ## Result
 

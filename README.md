@@ -8,6 +8,8 @@
 
 MCP server for CloudTalk — call center management, agents, contacts, and analytics for law firms.
 
+Requires Python MCP SDK >=2.2,<3; protocol revision 2026-07-28 is checked separately.
+
 ## Tools (12)
 
 | Tool                  | Description                                         |
