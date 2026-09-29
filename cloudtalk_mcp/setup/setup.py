@@ -3,6 +3,7 @@
 
 import os
 import sys
+from getpass import getpass
 
 from cloudtalk_mcp import credentials
 
@@ -23,7 +24,7 @@ def main():
         sys.exit(1)
 
     try:
-        key_secret = input("Key Secret: ").strip()
+        key_secret = getpass("Key Secret: ").strip()
     except EOFError:
         print("Error: Key Secret is required.", file=sys.stderr)
         sys.exit(1)

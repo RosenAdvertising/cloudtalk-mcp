@@ -32,6 +32,10 @@ def _retry_hint(resp, default=10):
         if not math.isfinite(numeric) or numeric <= 0:
             raise ValueError
         seconds = math.ceil(numeric)
+        # This client never sleeps inside a tool call. Keep any suggested
+        # wait bounded as well, so a vendor header cannot impose a long wait.
+        if seconds > 60:
+            return "Retry after a short delay."
         return f"Retry after {seconds} seconds."
     except (TypeError, ValueError, OverflowError):
         pass
@@ -145,6 +149,7 @@ class CloudTalkClient:
                 params=params,
                 json=json_body,
                 timeout=getattr(self, "timeout", 30),
+                allow_redirects=False,
             )
         except requests.RequestException:
             logger.warning(
@@ -168,6 +173,12 @@ class CloudTalkClient:
             raise NotFoundError() from None
         if resp.status_code == 429:
             raise RateLimitError(_retry_hint(resp)) from None
+        if 300 <= resp.status_code < 400:
+            logger.warning(
+                "cloudtalk_request_rejected reason=unexpected_redirect status_code=%s",
+                resp.status_code,
+            )
+            raise UpstreamHTTPError(resp.status_code, "unexpected redirect") from None
         if resp.status_code == 204:
             return {"success": True}
         if not resp.ok:

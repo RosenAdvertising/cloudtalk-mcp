@@ -354,9 +354,12 @@ def security_notes_resource() -> str:
     """Security posture for cloudtalk-mcp.
 
     ## Credentials
-    - **CLOUDTALK_API_KEY**: CloudTalk REST API key (Bearer token).
-    - Resolution order: OS keyring (macOS Keychain / libsecret) → process env →
-      `~/.cloudtalk-mcp/.env` (chmod 0600 fallback). Set via `cloudtalk-mcp-setup`.
+    - **CLOUDTALK_KEY_ID** and **CLOUDTALK_KEY_SECRET**: CloudTalk API
+      credentials sent using HTTP Basic authentication.
+    - Resolution order: process environment → OS keyring →
+      `~/.cloudtalk-mcp/.env` (0600 fallback). Set via `cloudtalk-mcp-setup`.
+      Restart the MCP server after changing credentials already loaded by its
+      process.
 
     ## Tool classification
     - **Read-only (safe):** who_am_i, list_agents, list_calls, get_call,

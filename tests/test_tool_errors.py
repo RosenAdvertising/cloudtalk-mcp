@@ -61,7 +61,7 @@ async def dispatch(tool: str, args: dict[str, Any] | None = None):
         ),
         (
             429,
-            "Error executing tool who_am_i: CloudTalk rate limit reached. Retry after 300 seconds.",
+            "Error executing tool who_am_i: CloudTalk rate limit reached. Retry after a short delay.",
         ),
         (
             429,
@@ -198,12 +198,12 @@ def test_retry_hint_rejects_absurd_and_malformed_values():
     from cloudtalk_mcp.client import _retry_hint
 
     assert (
-        _retry_hint(FakeResponse(429, headers={"Retry-After": "300"}))
-        == "Retry after 300 seconds."
+        _retry_hint(FakeResponse(429, headers={"Retry-After": "60"}))
+        == "Retry after 60 seconds."
     )
     assert (
         _retry_hint(FakeResponse(429, headers={"Retry-After": "999999999"}))
-        == "Retry after 999999999 seconds."
+        == "Retry after a short delay."
     )
     assert (
         _retry_hint(FakeResponse(429, headers={"Retry-After": "tomorrow"}))
@@ -223,6 +223,7 @@ def test_every_request_has_a_timeout(method):
     cast(Any, client.session).request = fake_request
     client._request(method, "https://example.test/api")
     assert captured["timeout"] == 30
+    assert captured["allow_redirects"] is False
 
 
 @pytest.mark.parametrize("error_type", [requests.Timeout, requests.ConnectionError])
@@ -311,6 +312,7 @@ def test_setup_bad_key_exits_with_typed_message(capsys, monkeypatch):
 
     answers = iter(["id", "secret"])
     monkeypatch.setattr("builtins.input", lambda prompt: next(answers))
+    monkeypatch.setattr(setup, "getpass", lambda prompt: next(answers))
     monkeypatch.setattr(setup.credentials, "set_secret", lambda key, value: "file")
     monkeypatch.setattr(setup.credentials, "ENV_FILE", "/isolated/fake.env")
     monkeypatch.setattr(
@@ -346,8 +348,45 @@ async def test_retry_after_over_sixty_keeps_advice_without_sleep(monkeypatch):
         lambda: client_for(FakeResponse(429, headers={"Retry-After": "300"})),
     )
     assert await dispatch("who_am_i") == (
-        "Error executing tool who_am_i: CloudTalk rate limit reached. Retry after 300 seconds."
+        "Error executing tool who_am_i: CloudTalk rate limit reached. Retry after a short delay."
     )
+
+
+def test_redirect_response_is_not_returned_as_success():
+    client = _bare_client(FakeResponse(302, {"success": True}))
+    with pytest.raises(Exception) as raised:
+        client._request("GET", "https://example.test/api")
+    assert "HTTP 302: unexpected redirect" in str(raised.value)
+
+
+def test_setup_reads_secret_with_getpass(capsys, monkeypatch):
+    from cloudtalk_mcp.setup import setup
+
+    monkeypatch.setattr("builtins.input", lambda _prompt: "key-id")
+    monkeypatch.setattr(setup, "getpass", lambda _prompt: "private-secret")
+    monkeypatch.setattr(setup.credentials, "set_secret", lambda *_args: "file")
+    monkeypatch.setattr(setup.credentials, "ENV_FILE", "/isolated/fake.env")
+    monkeypatch.setattr(
+        "cloudtalk_mcp.setup.verify.run_verify", lambda: (_ for _ in ()).throw(MissingCredentialsError())
+    )
+    with pytest.raises(SystemExit):
+        setup.main()
+    output = capsys.readouterr()
+    assert "private-secret" not in output.out + output.err
+
+
+def test_fallback_secret_file_is_private_at_write(tmp_path, monkeypatch):
+    import stat
+
+    from cloudtalk_mcp import credentials
+
+    config_dir = tmp_path / "config"
+    env_file = config_dir / ".env"
+    monkeypatch.setattr(credentials, "CONFIG_DIR", config_dir)
+    monkeypatch.setattr(credentials, "ENV_FILE", env_file)
+    credentials._write_env_file({"CLOUDTALK_KEY_SECRET": "private-secret"})
+    assert stat.S_IMODE(env_file.stat().st_mode) == 0o600
+    assert env_file.read_text() == "CLOUDTALK_KEY_SECRET=private-secret\n"
 
 
 @pytest.mark.asyncio

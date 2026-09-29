@@ -54,10 +54,10 @@ is available.
 without Secret Service), or if you set `CLOUDTALK_MCP_USE_KEYRING=0`, credentials
 fall back to a `~/.cloudtalk-mcp/.env` file with `0600` permissions.
 
-**Read order.** Credentials resolve in the order OS keyring → process environment
-→ `.env` file. So a rotated secret in the keyring always wins, and a
-`CLOUDTALK_KEY_ID` / `CLOUDTALK_KEY_SECRET` exported in your shell overrides the
-file fallback without touching the keyring.
+**Read order.** A credential already present in the server process environment
+takes precedence. Otherwise the client checks the OS keyring, then the `.env`
+file. If you change credentials after the server has loaded them, restart the
+MCP server to reload the new values.
 
 **Pluggable backend.** `keyring` lets you point at any secret store. For example,
 install [`keyrings.cryptfile`](https://pypi.org/project/keyrings.cryptfile/) for
