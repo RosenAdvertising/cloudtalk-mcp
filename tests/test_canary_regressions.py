@@ -214,7 +214,9 @@ def test_missing_credentials_rejection_has_pii_free_reason_log(
     assert SENTINEL not in caplog.text
 
 
-def test_verification_success_does_not_print_agent_identity(monkeypatch, capsys) -> None:
+def test_verification_success_does_not_print_agent_identity(
+    monkeypatch, capsys
+) -> None:
     class StubClient:
         def who_am_i(self):
             return {"agent_name": SENTINEL, "agent_email": SENTINEL}
