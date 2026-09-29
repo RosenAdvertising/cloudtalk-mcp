@@ -6,15 +6,19 @@ import logging
 from typing import Annotated
 
 from mcp.server import MCPServer
-from mcp.server.mcpserver.context import Context
-from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
+from mcp.server.mcpserver.exceptions import (
+    ResourceError,
+    ResourceNotFoundError,
+    ToolError,
+    UnexpectedToolError,
+)
 from mcp.shared.exceptions import MCPError
 from mcp.types import CallToolResult, TextContent
 from pydantic import ValidationError
 from pydantic import Field
 
 from .client import CloudTalkClient
-from .errors import CloudTalkToolError
+from .errors import CloudTalkToolError, ResourceReadError
 
 logger = logging.getLogger(__name__)
 
@@ -69,37 +73,47 @@ class SafeMCPServer(MCPServer):
         ]
         return f"Error executing tool {name}: Invalid arguments: {' '.join(messages)}"
 
-    async def _handle_call_tool(self, ctx, params):
-        context = Context(
-            request_context=ctx,
-            mcp_server=self,
-            input_params=params,
-            subscriptions=self._subscriptions,
-        )
+    async def call_tool(self, name, arguments, context=None):
         try:
-            return await self.call_tool(params.name, params.arguments or {}, context)
-        except MCPError:
-            raise
+            return await super().call_tool(name, arguments, context)
         except Exception as exc:
-            if isinstance(exc, ToolError) and not isinstance(exc, UnexpectedToolError):
-                cause = exc.__cause__
-                if isinstance(cause, ValidationError):
-                    message = self._safe_validation_message(params.name, cause)
-                    logger.info("tool_call_rejected reason=invalid_arguments")
-                elif isinstance(cause, CloudTalkToolError):
-                    message = str(exc)
-                    # Tool.run prepends this once; keep that SDK-compatible prefix.
-                    logger.info("tool_call_rejected reason=expected_failure")
-                else:
-                    logger.error("Tool failed reason=unexpected_failure")
-                    message = f"Error executing tool {params.name}"
+            # Inspect only the SDK wrapper's immediate cause. Unknown outer
+            # failures stay masked even when their cause is a classified error.
+            cause = exc.__cause__
+            safe_error = cause if isinstance(cause, CloudTalkToolError) else None
+            validation = cause if isinstance(cause, ValidationError) else None
+            if (
+                isinstance(exc, ToolError)
+                and validation is not None
+                and not isinstance(exc, UnexpectedToolError)
+            ):
+                message = self._safe_validation_message(name, validation)
+                logger.info("tool_call_rejected reason=invalid_arguments")
+            elif (
+                isinstance(exc, ToolError)
+                and safe_error is not None
+                and not isinstance(exc, UnexpectedToolError)
+            ):
+                message = f"Error executing tool {name}: {safe_error}"
+                logger.info("tool_call_rejected reason=expected_failure")
             else:
-                # Never emit the exception, its traceback, or its cause chain.
                 logger.error("Tool failed reason=unexpected_failure")
-                message = f"Error executing tool {params.name}"
+                message = f"Error executing tool {name}"
             return CallToolResult(
                 content=[TextContent(type="text", text=message)], is_error=True
             )
+
+    async def read_resource(self, uri, context=None):
+        try:
+            return await super().read_resource(uri, context)
+        except ResourceNotFoundError:
+            raise ResourceNotFoundError("CloudTalk resource was not found.") from None
+        except MCPError:
+            logger.error("resource_read_failed reason=unexpected_failure")
+            raise ResourceError(str(ResourceReadError())) from None
+        except Exception:
+            logger.error("resource_read_failed reason=unexpected_failure")
+            raise ResourceError(str(ResourceReadError())) from None
 
 
 mcp = SafeMCPServer("cloudtalk")

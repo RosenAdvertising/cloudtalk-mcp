@@ -18,8 +18,16 @@ class MissingCredentialsError(CloudTalkToolError):
 class AuthorizationError(CloudTalkToolError):
     def __init__(self) -> None:
         super().__init__(
-            "CloudTalk authorization was rejected or expired. Reauthorize "
-            "the account with cloudtalk-mcp-setup."
+            "CloudTalk authorization was rejected; re-run cloudtalk-mcp-setup."
+        )
+
+
+class PermissionDeniedError(CloudTalkToolError):
+    def __init__(self) -> None:
+        super().__init__(
+            "CloudTalk access denied: the connected account lacks permission "
+            "for this action (or the authorization expired; re-run "
+            "cloudtalk-mcp-setup if so)."
         )
 
 
@@ -50,8 +58,17 @@ class TransportError(CloudTalkToolError):
         if write:
             message = (
                 "CloudTalk request could not be confirmed. The operation outcome "
-                "may be unknown; check its status before retrying."
+                "is unknown. Check whether it completed before retrying."
             )
         else:
             message = "CloudTalk connection failed. Check connectivity and try again."
         super().__init__(message)
+
+
+class ResourceReadError(CloudTalkToolError):
+    """Fixed public message for failures while resolving an MCP resource."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "CloudTalk resource could not be read. Check connectivity and try again."
+        )

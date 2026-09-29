@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 import base64
 import logging
+import math
 import os
 from typing import Any
+from urllib.parse import quote
 
 import requests
 
@@ -11,6 +13,7 @@ from cloudtalk_mcp.errors import (
     AuthorizationError,
     MissingCredentialsError,
     NotFoundError,
+    PermissionDeniedError,
     RateLimitError,
     TransportError,
     UpstreamHTTPError,
@@ -24,9 +27,12 @@ logger = logging.getLogger(__name__)
 
 def _retry_hint(resp, default=10):
     try:
-        seconds = int(resp.headers.get("Retry-After", default))
-        if 0 < seconds <= 86400:
-            return f"Retry after {seconds} seconds."
+        raw = resp.headers.get("Retry-After", default)
+        numeric = float(raw)
+        if not math.isfinite(numeric) or numeric <= 0:
+            raise ValueError
+        seconds = math.ceil(numeric)
+        return f"Retry after {seconds} seconds."
     except (TypeError, ValueError, OverflowError):
         pass
     return "Retry after a short delay."
@@ -105,6 +111,7 @@ class CloudTalkClient:
             raise MissingCredentialsError() from None
         basic_auth = base64.b64encode(f"{key_id}:{key_secret}".encode()).decode()
         self.session = requests.Session()
+        self.timeout = 30
         self.session.headers.update(
             {
                 "Authorization": f"Basic {basic_auth}",
@@ -132,7 +139,13 @@ class CloudTalkClient:
         json_body: Any = None,
     ) -> Any:
         try:
-            resp = self.session.request(method, url, params=params, json=json_body)
+            resp = self.session.request(
+                method,
+                url,
+                params=params,
+                json=json_body,
+                timeout=getattr(self, "timeout", 30),
+            )
         except requests.RequestException:
             logger.warning(
                 "cloudtalk_request_rejected reason=transport_error",
@@ -140,12 +153,17 @@ class CloudTalkClient:
             raise TransportError(
                 write=method.upper() not in {"GET", "HEAD", "OPTIONS"}
             ) from None
-        if resp.status_code in (401, 403):
+        if resp.status_code == 401:
             logger.warning(
                 "cloudtalk_request_rejected reason=upstream_unauthorized status_code=%s",
                 resp.status_code,
             )
             raise AuthorizationError() from None
+        if resp.status_code == 403:
+            logger.warning(
+                "cloudtalk_request_rejected reason=permission_denied status_code=403"
+            )
+            raise PermissionDeniedError() from None
         if resp.status_code == 404:
             raise NotFoundError() from None
         if resp.status_code == 429:
@@ -211,7 +229,7 @@ class CloudTalkClient:
 
     def get_call(self, call_id):
         """Get comprehensive call details from the analytics API."""
-        url = self._analytics_url(f"calls/{call_id}")
+        url = self._analytics_url(f"calls/{quote(str(call_id), safe='')}")
         return self._request("GET", url)
 
     def initiate_call(self, agent_id, callee_number):
@@ -228,7 +246,7 @@ class CloudTalkClient:
         return _cap_response_data(response, limit)
 
     def get_contact(self, contact_id):
-        return self.get(f"/contacts/show/{contact_id}")
+        return self.get(f"/contacts/show/{quote(str(contact_id), safe='')}")
 
     def create_contact(self, first_name, last_name="", phone="", email=""):
         # API requires a single `name` field; phone/email are array sub-objects.
@@ -254,10 +272,10 @@ class CloudTalkClient:
             body["ContactEmail"] = [{"email": email}]
         if not body:
             return {"success": True, "message": "No fields to update"}
-        return self.post(f"/contacts/edit/{contact_id}", body=body)
+        return self.post(f"/contacts/edit/{quote(str(contact_id), safe='')}", body=body)
 
     def delete_contact(self, contact_id):
-        return self.delete(f"/contacts/delete/{contact_id}")
+        return self.delete(f"/contacts/delete/{quote(str(contact_id), safe='')}")
 
     # --- Numbers ---
 

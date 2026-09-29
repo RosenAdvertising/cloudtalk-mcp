@@ -3,6 +3,7 @@
 
 import sys
 from cloudtalk_mcp.client import CloudTalkClient
+from cloudtalk_mcp.errors import CloudTalkToolError
 
 
 def run_verify():
@@ -15,7 +16,7 @@ def run_verify():
 def main():
     try:
         run_verify()
-    except RuntimeError as exc:
+    except CloudTalkToolError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
     except Exception:

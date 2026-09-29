@@ -42,10 +42,14 @@ does not verify live vendor responses, saved-credential CLI behavior, or a
 deployed stdio connection. The protocol guard checks installed SDK constants;
 the lock selects SDK 2.2.0, while the requirement permits later 2.x releases.
 
-## Open product decision
+## Public error behavior
 
-MCP 2.2.0 masks messages from tool exceptions other than `ToolError` or
-`ResourceError`. Retaining that masking limits leakage; raising explicitly
-safe `ToolError` messages would give clients more actionable feedback. Toby
-should decide which errors, if any, warrant that change. Existing exception
-handling is unchanged in this migration.
+Tool calls return `isError=true` for failures. Missing credentials, rejected
+authorization, access denial, not-found responses, rate limits, upstream HTTP
+failures, unreadable responses, and transport failures use fixed messages that
+do not include credentials, request URLs, response bodies, or exception text.
+Validation errors identify the parameter and its expected shape without
+echoing the rejected value. Unexpected failures return a generic tool error.
+Resource read failures return a fixed generic message and do not expose the
+underlying exception. For writes with an uncertain transport outcome, clients
+are told to check the operation status before retrying.

@@ -5,7 +5,7 @@ from typing import Any, cast
 
 import pytest
 import requests
-from mcp.types import CallToolRequestParams
+from mcp.types import CallToolRequestParams, CallToolResult, TextContent
 from test_canary_regressions import FakeResponse as BaseResponse, _bare_client
 
 from cloudtalk_mcp import server
@@ -35,9 +35,11 @@ def client_for(response=None, error=None):
 
 async def dispatch(tool: str, args: dict[str, Any] | None = None):
     result = await server.mcp._handle_call_tool(
-        None, CallToolRequestParams(name=tool, arguments=args or {})
+        cast(Any, None), CallToolRequestParams(name=tool, arguments=args or {})
     )
+    assert isinstance(result, CallToolResult)
     assert result.is_error is True
+    assert isinstance(result.content[0], TextContent)
     return result.content[0].text
 
 
@@ -47,11 +49,11 @@ async def dispatch(tool: str, args: dict[str, Any] | None = None):
     [
         (
             401,
-            "Error executing tool who_am_i: CloudTalk authorization was rejected or expired. Reauthorize the account with cloudtalk-mcp-setup.",
+            "Error executing tool who_am_i: CloudTalk authorization was rejected; re-run cloudtalk-mcp-setup.",
         ),
         (
             403,
-            "Error executing tool who_am_i: CloudTalk authorization was rejected or expired. Reauthorize the account with cloudtalk-mcp-setup.",
+            "Error executing tool who_am_i: CloudTalk access denied: the connected account lacks permission for this action (or the authorization expired; re-run cloudtalk-mcp-setup if so).",
         ),
         (
             404,
@@ -117,7 +119,7 @@ async def test_transport_failure_write_warns_check_status(monkeypatch):
     )
     assert await dispatch("create_contact", {"first_name": "A"}) == (
         "Error executing tool create_contact: CloudTalk request could not be confirmed. "
-        "The operation outcome may be unknown; check its status before retrying."
+        "The operation outcome is unknown. Check whether it completed before retrying."
     )
 
 
@@ -201,12 +203,125 @@ def test_retry_hint_rejects_absurd_and_malformed_values():
     )
     assert (
         _retry_hint(FakeResponse(429, headers={"Retry-After": "999999999"}))
-        == "Retry after a short delay."
+        == "Retry after 999999999 seconds."
     )
     assert (
         _retry_hint(FakeResponse(429, headers={"Retry-After": "tomorrow"}))
         == "Retry after a short delay."
     )
+
+
+@pytest.mark.parametrize("method", ["GET", "POST", "PUT", "PATCH", "DELETE"])
+def test_every_request_has_a_timeout(method):
+    client = _bare_client(FakeResponse(200, {}))
+    captured = {}
+
+    def fake_request(*args, **kwargs):
+        captured.update(kwargs)
+        return FakeResponse(200, {})
+
+    cast(Any, client.session).request = fake_request
+    client._request(method, "https://example.test/api")
+    assert captured["timeout"] == 30
+
+
+@pytest.mark.parametrize("error_type", [requests.Timeout, requests.ConnectionError])
+@pytest.mark.parametrize(
+    ("method", "write"),
+    [("GET", False), ("POST", True), ("PUT", True), ("PATCH", True), ("DELETE", True)],
+)
+def test_transport_failures_distinguish_read_and_write(method, write, error_type):
+    client = client_for(error=error_type(PII))
+    with pytest.raises(Exception) as raised:
+        client._request(method, "https://example.test/api")
+    expected = (
+        "outcome is unknown. Check whether it completed before retrying"
+        if write
+        else "connection failed. Check connectivity and try again"
+    )
+    assert expected in str(raised.value)
+    assert PII not in str(raised.value)
+
+
+def test_string_path_ids_are_escaped(monkeypatch):
+    urls = []
+    client = _bare_client(FakeResponse(200, {}))
+    cast(Any, client.session).request = lambda method, url, **kwargs: (
+        urls.append(url) or FakeResponse(200, {})
+    )
+    client.get_contact("../x")
+    client.update_contact("../x", first_name="A")
+    client.delete_contact("../x")
+    client.get_call("../x")
+    assert all("../x" not in url for url in urls)
+    assert urls == [
+        "https://my.cloudtalk.io/api/contacts/show/..%2Fx.json",
+        "https://my.cloudtalk.io/api/contacts/edit/..%2Fx.json",
+        "https://my.cloudtalk.io/api/contacts/delete/..%2Fx.json",
+        "https://analytics-api.cloudtalk.io/api/calls/..%2Fx",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_resource_failure_has_fixed_text_and_no_exception_log(
+    monkeypatch, caplog
+):
+    def crash():
+        raise RuntimeError(PII)
+
+    monkeypatch.setattr(server, "_client", crash)
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(Exception) as raised:
+            await server.mcp.read_resource("cloudtalk://numbers")
+    assert (
+        str(raised.value)
+        == "CloudTalk resource could not be read. Check connectivity and try again."
+    )
+    assert PII not in caplog.text
+
+
+def test_verify_without_credentials_exits_actionably(capsys, monkeypatch):
+    from cloudtalk_mcp.setup import verify
+
+    monkeypatch.setattr(
+        verify,
+        "CloudTalkClient",
+        lambda: (_ for _ in ()).throw(MissingCredentialsError()),
+    )
+    with pytest.raises(SystemExit) as raised:
+        verify.main()
+    assert raised.value.code == 1
+    assert "CloudTalk credentials are missing" in capsys.readouterr().err
+
+
+def test_setup_eof_exits_cleanly(capsys, monkeypatch):
+    from cloudtalk_mcp.setup import setup
+
+    monkeypatch.setattr(
+        "builtins.input", lambda prompt: (_ for _ in ()).throw(EOFError)
+    )
+    with pytest.raises(SystemExit) as raised:
+        setup.main()
+    assert raised.value.code == 1
+    assert "Key ID is required" in capsys.readouterr().err
+
+
+def test_setup_bad_key_exits_with_typed_message(capsys, monkeypatch):
+    from cloudtalk_mcp.setup import setup, verify
+
+    answers = iter(["id", "secret"])
+    monkeypatch.setattr("builtins.input", lambda prompt: next(answers))
+    monkeypatch.setattr(setup.credentials, "set_secret", lambda key, value: "file")
+    monkeypatch.setattr(setup.credentials, "ENV_FILE", "/isolated/fake.env")
+    monkeypatch.setattr(
+        verify, "run_verify", lambda: (_ for _ in ()).throw(MissingCredentialsError())
+    )
+    with pytest.raises(SystemExit) as raised:
+        setup.main()
+    captured = capsys.readouterr()
+    assert raised.value.code == 1
+    assert "CloudTalk credentials are missing" in captured.err
+    assert "Traceback" not in captured.err
 
 
 @pytest.mark.asyncio
@@ -221,6 +336,18 @@ async def test_unreadable_write_response_advises_checking_result(monkeypatch, ca
         == "Error executing tool create_contact: CloudTalk API returned an unreadable response. Check the result in CloudTalk before retrying."
     )
     assert PII not in actual + caplog.text
+
+
+@pytest.mark.asyncio
+async def test_retry_after_over_sixty_keeps_advice_without_sleep(monkeypatch):
+    monkeypatch.setattr(
+        server,
+        "_client",
+        lambda: client_for(FakeResponse(429, headers={"Retry-After": "300"})),
+    )
+    assert await dispatch("who_am_i") == (
+        "Error executing tool who_am_i: CloudTalk rate limit reached. Retry after 300 seconds."
+    )
 
 
 @pytest.mark.asyncio
