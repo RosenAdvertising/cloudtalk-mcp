@@ -2,24 +2,64 @@
 import base64
 import logging
 import os
-import sys
-import time
 from typing import Any
 
 import requests
 
 from cloudtalk_mcp import credentials
+from cloudtalk_mcp.errors import (
+    AuthorizationError,
+    MissingCredentialsError,
+    NotFoundError,
+    RateLimitError,
+    TransportError,
+    UpstreamHTTPError,
+    UpstreamResponseError,
+)
 
 BASE_URL = "https://my.cloudtalk.io/api"
 ANALYTICS_BASE_URL = "https://analytics-api.cloudtalk.io/api"
 logger = logging.getLogger(__name__)
 
 
-def _retry_after_seconds(resp, default=10):
+def _retry_hint(resp, default=10):
     try:
-        return int(resp.headers.get("Retry-After", default))
-    except (TypeError, ValueError):
-        return default
+        seconds = int(resp.headers.get("Retry-After", default))
+        if 0 < seconds <= 86400:
+            return f"Retry after {seconds} seconds."
+    except (TypeError, ValueError, OverflowError):
+        pass
+    return "Retry after a short delay."
+
+
+_SAFE_VENDOR_REASONS = {
+    "invalid_request": "invalid request",
+    "not_found": "record not found",
+    "permission_denied": "permission denied",
+    "unauthorized": "authorization rejected",
+    "rate_limit_exceeded": "rate limit exceeded",
+    "validation_error": "request validation failed",
+    "internal_error": "upstream service error",
+    "service_unavailable": "service unavailable",
+}
+
+
+def _safe_vendor_reason(resp) -> str:
+    """Return only a fixed generic reason from a deliberately small allowlist."""
+    try:
+        payload = resp.json()
+    except ValueError:
+        return "request rejected"
+    if not isinstance(payload, dict):
+        return "request rejected"
+    candidates = [payload.get("code"), payload.get("error")]
+    nested = payload.get("responseData")
+    if isinstance(nested, dict):
+        candidates.extend([nested.get("code"), nested.get("error")])
+    for value in candidates:
+        if isinstance(value, str) and value in _SAFE_VENDOR_REASONS:
+            return _SAFE_VENDOR_REASONS[value]
+    return "request rejected"
 
 
 def _json_response(resp):
@@ -30,9 +70,7 @@ def _json_response(resp):
             "cloudtalk_request_rejected reason=upstream_non_json status_code=%s",
             resp.status_code,
         )
-        raise RuntimeError(
-            f"CloudTalk API returned non-JSON ({resp.status_code})"
-        ) from None
+        raise UpstreamResponseError() from None
 
 
 def _cap_response_data(response: Any, limit: int) -> Any:
@@ -64,9 +102,7 @@ class CloudTalkClient:
         key_secret = os.environ.get("CLOUDTALK_KEY_SECRET", "")
         if not key_id or not key_secret:
             logger.warning("cloudtalk_request_rejected reason=credentials_missing")
-            raise RuntimeError(
-                "CloudTalk credentials not found. Run: cloudtalk-mcp-setup"
-            )
+            raise MissingCredentialsError() from None
         basic_auth = base64.b64encode(f"{key_id}:{key_secret}".encode()).decode()
         self.session = requests.Session()
         self.session.headers.update(
@@ -94,43 +130,36 @@ class CloudTalkClient:
         url: str,
         params: dict[str, Any] | None = None,
         json_body: Any = None,
-        _rate_retries: int = 0,
     ) -> Any:
         try:
             resp = self.session.request(method, url, params=params, json=json_body)
-        except requests.RequestException as exc:
+        except requests.RequestException:
             logger.warning(
-                "cloudtalk_request_rejected reason=transport_error exception_type=%s",
-                type(exc).__name__,
+                "cloudtalk_request_rejected reason=transport_error",
             )
-            raise RuntimeError("CloudTalk API request failed") from None
-        if resp.status_code == 401:
+            raise TransportError(
+                write=method.upper() not in {"GET", "HEAD", "OPTIONS"}
+            ) from None
+        if resp.status_code in (401, 403):
             logger.warning(
-                "cloudtalk_request_rejected reason=upstream_unauthorized "
-                "status_code=401"
+                "cloudtalk_request_rejected reason=upstream_unauthorized status_code=%s",
+                resp.status_code,
             )
-            raise RuntimeError(
-                "CloudTalk credentials invalid. Run: cloudtalk-mcp-setup"
-            )
-        if resp.status_code == 429 and _rate_retries < 3:
-            wait = _retry_after_seconds(resp)
-            print(f"Rate limited. Waiting {wait}s...", file=sys.stderr)
-            time.sleep(wait)
-            return self._request(
-                method,
-                url,
-                params=params,
-                json_body=json_body,
-                _rate_retries=_rate_retries + 1,
-            )
+            raise AuthorizationError() from None
+        if resp.status_code == 404:
+            raise NotFoundError() from None
+        if resp.status_code == 429:
+            raise RateLimitError(_retry_hint(resp)) from None
         if resp.status_code == 204:
             return {"success": True}
         if not resp.ok:
+            reason = _safe_vendor_reason(resp)
             logger.warning(
-                "cloudtalk_request_rejected reason=upstream_error status_code=%s",
+                "cloudtalk_request_rejected reason=upstream_error status_code=%s vendor_reason=%s",
                 resp.status_code,
+                reason,
             )
-            raise RuntimeError(f"CloudTalk API error {resp.status_code}")
+            raise UpstreamHTTPError(resp.status_code, reason) from None
         return _json_response(resp)
 
     def get(self, path: str, params: dict[str, Any] | None = None) -> Any:

@@ -2,14 +2,107 @@
 """CloudTalk MCP server — 12 tools for call center management."""
 
 import json
+import logging
 from typing import Annotated
 
 from mcp.server import MCPServer
+from mcp.server.mcpserver.context import Context
+from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
+from mcp.shared.exceptions import MCPError
+from mcp.types import CallToolResult, TextContent
+from pydantic import ValidationError
 from pydantic import Field
 
 from .client import CloudTalkClient
+from .errors import CloudTalkToolError
 
-mcp = MCPServer("cloudtalk")
+logger = logging.getLogger(__name__)
+
+
+class SafeMCPServer(MCPServer):
+    """Keep SDK 2.2.0's tool surface while sanitizing dispatch failures."""
+
+    @staticmethod
+    def _shape(schema: dict) -> str:
+        if "anyOf" in schema:
+            return " or ".join(SafeMCPServer._shape(item) for item in schema["anyOf"])
+        kind = schema.get("type")
+        if isinstance(kind, list):
+            return " or ".join(
+                SafeMCPServer._shape({"type": option}) for option in kind
+            )
+        if kind == "null":
+            return "null"
+        if kind == "integer":
+            minimum, maximum = schema.get("minimum"), schema.get("maximum")
+            if minimum is not None and maximum is not None:
+                return f"an integer from {minimum} to {maximum}"
+            if minimum is not None:
+                return f"an integer of at least {minimum}"
+            return "an integer"
+        if kind == "string":
+            return "a string"
+        if kind == "number":
+            return "a number"
+        if kind == "boolean":
+            return "a boolean"
+        if kind == "array":
+            return "an array"
+        if kind == "object":
+            return "an object"
+        return "the documented value"
+
+    def _safe_validation_message(self, name: str, exc: ValidationError) -> str:
+        tool = self._tool_manager.get_tool(name)
+        schema = tool.fn_metadata.arg_model.model_json_schema() if tool else {}
+        properties = schema.get("properties", {})
+        names: set[str] = set()
+        for error in exc.errors():
+            loc = error.get("loc", ())
+            if loc and isinstance(loc[0], str) and loc[0] in properties:
+                names.add(loc[0])
+        if not names:
+            return f"Error executing tool {name}: Invalid arguments; use the listed parameters."
+        messages = [
+            f"'{param}' must be {self._shape(properties[param])}."
+            for param in sorted(names)
+        ]
+        return f"Error executing tool {name}: Invalid arguments: {' '.join(messages)}"
+
+    async def _handle_call_tool(self, ctx, params):
+        context = Context(
+            request_context=ctx,
+            mcp_server=self,
+            input_params=params,
+            subscriptions=self._subscriptions,
+        )
+        try:
+            return await self.call_tool(params.name, params.arguments or {}, context)
+        except MCPError:
+            raise
+        except Exception as exc:
+            if isinstance(exc, ToolError) and not isinstance(exc, UnexpectedToolError):
+                cause = exc.__cause__
+                if isinstance(cause, ValidationError):
+                    message = self._safe_validation_message(params.name, cause)
+                    logger.info("tool_call_rejected reason=invalid_arguments")
+                elif isinstance(cause, CloudTalkToolError):
+                    message = str(exc)
+                    # Tool.run prepends this once; keep that SDK-compatible prefix.
+                    logger.info("tool_call_rejected reason=expected_failure")
+                else:
+                    logger.error("Tool failed reason=unexpected_failure")
+                    message = f"Error executing tool {params.name}"
+            else:
+                # Never emit the exception, its traceback, or its cause chain.
+                logger.error("Tool failed reason=unexpected_failure")
+                message = f"Error executing tool {params.name}"
+            return CallToolResult(
+                content=[TextContent(type="text", text=message)], is_error=True
+            )
+
+
+mcp = SafeMCPServer("cloudtalk")
 
 PageNumber = Annotated[
     int,

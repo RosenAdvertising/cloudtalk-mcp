@@ -165,7 +165,7 @@ def test_upstream_rejections_log_reason_without_response_pii(
     caplog.set_level(logging.WARNING, logger="cloudtalk_mcp.client")
     client = _bare_client(response)
 
-    with pytest.raises(RuntimeError) as error:
+    with pytest.raises(ToolError) as error:
         client._request("GET", "https://example.test/api")
 
     combined = str(error.value) + caplog.text
@@ -177,7 +177,7 @@ def test_non_json_rejection_omits_response_pii(caplog) -> None:
     caplog.set_level(logging.WARNING, logger="cloudtalk_mcp.client")
     response = FakeResponse(200)
 
-    with pytest.raises(RuntimeError) as error:
+    with pytest.raises(ToolError) as error:
         _json_response(response)
 
     combined = str(error.value) + caplog.text
@@ -189,7 +189,7 @@ def test_transport_rejection_omits_exception_pii(caplog) -> None:
     caplog.set_level(logging.WARNING, logger="cloudtalk_mcp.client")
     client = _bare_client()
 
-    with pytest.raises(RuntimeError, match="API request failed") as error:
+    with pytest.raises(ToolError, match="connection failed") as error:
         client._request("GET", "https://example.test/api")
 
     combined = str(error.value) + caplog.text
@@ -207,7 +207,7 @@ def test_missing_credentials_rejection_has_pii_free_reason_log(
     )
     caplog.set_level(logging.WARNING, logger="cloudtalk_mcp.client")
 
-    with pytest.raises(RuntimeError, match="credentials not found"):
+    with pytest.raises(ToolError, match="credentials are missing"):
         CloudTalkClient()
 
     assert "credentials_missing" in caplog.text
