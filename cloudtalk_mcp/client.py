@@ -32,10 +32,6 @@ def _retry_hint(resp, default=10):
         if not math.isfinite(numeric) or numeric <= 0:
             raise ValueError
         seconds = math.ceil(numeric)
-        # This client never sleeps inside a tool call. Keep any suggested
-        # wait bounded as well, so a vendor header cannot impose a long wait.
-        if seconds > 60:
-            return "Retry after a short delay."
         return f"Retry after {seconds} seconds."
     except (TypeError, ValueError, OverflowError):
         pass

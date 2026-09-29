@@ -48,6 +48,10 @@ async def dispatch(tool: str, args: dict[str, Any] | None = None):
     ("status", "expected"),
     [
         (
+            302,
+            "Error executing tool who_am_i: CloudTalk API returned HTTP 302: unexpected redirect.",
+        ),
+        (
             401,
             "Error executing tool who_am_i: CloudTalk authorization was rejected; re-run cloudtalk-mcp-setup.",
         ),
@@ -61,7 +65,7 @@ async def dispatch(tool: str, args: dict[str, Any] | None = None):
         ),
         (
             429,
-            "Error executing tool who_am_i: CloudTalk rate limit reached. Retry after a short delay.",
+            "Error executing tool who_am_i: CloudTalk rate limit reached. Retry after 300 seconds.",
         ),
         (
             429,
@@ -203,7 +207,7 @@ def test_retry_hint_rejects_absurd_and_malformed_values():
     )
     assert (
         _retry_hint(FakeResponse(429, headers={"Retry-After": "999999999"}))
-        == "Retry after a short delay."
+        == "Retry after 999999999 seconds."
     )
     assert (
         _retry_hint(FakeResponse(429, headers={"Retry-After": "tomorrow"}))
@@ -348,7 +352,7 @@ async def test_retry_after_over_sixty_keeps_advice_without_sleep(monkeypatch):
         lambda: client_for(FakeResponse(429, headers={"Retry-After": "300"})),
     )
     assert await dispatch("who_am_i") == (
-        "Error executing tool who_am_i: CloudTalk rate limit reached. Retry after a short delay."
+        "Error executing tool who_am_i: CloudTalk rate limit reached. Retry after 300 seconds."
     )
 
 
