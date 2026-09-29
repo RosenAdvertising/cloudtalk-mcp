@@ -116,7 +116,7 @@ async def test_list_tools_reject_invalid_pagination(
     tool = server.mcp._tool_manager.get_tool(tool_name)
     assert tool is not None
     with pytest.raises(ToolError, match="validation error"):
-        await tool.run(arguments, None)
+        await tool.run(arguments, cast(Any, None))
 
 
 @pytest.mark.parametrize("method_name", LIST_TOOLS)
