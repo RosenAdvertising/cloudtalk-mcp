@@ -371,7 +371,8 @@ def test_setup_reads_secret_with_getpass(capsys, monkeypatch):
     monkeypatch.setattr(setup.credentials, "set_secret", lambda *_args: "file")
     monkeypatch.setattr(setup.credentials, "ENV_FILE", "/isolated/fake.env")
     monkeypatch.setattr(
-        "cloudtalk_mcp.setup.verify.run_verify", lambda: (_ for _ in ()).throw(MissingCredentialsError())
+        "cloudtalk_mcp.setup.verify.run_verify",
+        lambda: (_ for _ in ()).throw(MissingCredentialsError()),
     )
     with pytest.raises(SystemExit):
         setup.main()
