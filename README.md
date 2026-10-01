@@ -54,6 +54,9 @@ is available.
 without Secret Service), or if you set `CLOUDTALK_MCP_USE_KEYRING=0`, credentials
 fall back to a `~/.cloudtalk-mcp/.env` file with `0600` permissions.
 
+On Windows, the OS credential store is used; the file fallback is not supported
+because private secret-file writes require `os.fchmod`.
+
 **Read order.** A credential already present in the server process environment
 takes precedence. Otherwise the client checks the OS keyring, then the `.env`
 file. If you change credentials after the server has loaded them, restart the
