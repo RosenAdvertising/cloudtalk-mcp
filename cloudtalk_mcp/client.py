@@ -3,6 +3,7 @@ import base64
 import logging
 import math
 import os
+import re
 from typing import Any
 from urllib.parse import quote
 
@@ -11,6 +12,7 @@ import requests
 from cloudtalk_mcp import credentials
 from cloudtalk_mcp.errors import (
     AuthorizationError,
+    CloudTalkToolError,
     MissingCredentialsError,
     NotFoundError,
     PermissionDeniedError,
@@ -97,6 +99,22 @@ def _cap_response_data(response: Any, limit: int) -> Any:
         capped_response["data"] = response["data"][:limit]
         return capped_response
     return response
+
+
+def _path_id(value, parameter: str) -> str:
+    """Validate a plain identifier before URL quoting or any HTTP request."""
+    expected = (
+        "a non-empty plain identifier (ASCII letters, digits, -, _, ., ~); not . or .."
+    )
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (str, int))
+        or str(value) in {".", ".."}
+        or re.fullmatch(r"[A-Za-z0-9._~-]+", str(value)) is None
+    ):
+        message = f"Invalid argument '{parameter}': use {expected}."
+        raise CloudTalkToolError(message)
+    return quote(str(value), safe="")
 
 
 class CloudTalkClient:
@@ -236,7 +254,7 @@ class CloudTalkClient:
 
     def get_call(self, call_id):
         """Get comprehensive call details from the analytics API."""
-        url = self._analytics_url(f"calls/{quote(str(call_id), safe='')}")
+        url = self._analytics_url(f"calls/{_path_id(call_id, 'call_id')}")
         return self._request("GET", url)
 
     def initiate_call(self, agent_id, callee_number):
@@ -253,7 +271,7 @@ class CloudTalkClient:
         return _cap_response_data(response, limit)
 
     def get_contact(self, contact_id):
-        return self.get(f"/contacts/show/{quote(str(contact_id), safe='')}")
+        return self.get(f"/contacts/show/{_path_id(contact_id, 'contact_id')}")
 
     def create_contact(self, first_name, last_name="", phone="", email=""):
         # API requires a single `name` field; phone/email are array sub-objects.
@@ -279,10 +297,12 @@ class CloudTalkClient:
             body["ContactEmail"] = [{"email": email}]
         if not body:
             return {"success": True, "message": "No fields to update"}
-        return self.post(f"/contacts/edit/{quote(str(contact_id), safe='')}", body=body)
+        return self.post(
+            f"/contacts/edit/{_path_id(contact_id, 'contact_id')}", body=body
+        )
 
     def delete_contact(self, contact_id):
-        return self.delete(f"/contacts/delete/{quote(str(contact_id), safe='')}")
+        return self.delete(f"/contacts/delete/{_path_id(contact_id, 'contact_id')}")
 
     # --- Numbers ---
 

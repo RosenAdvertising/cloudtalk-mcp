@@ -6,12 +6,12 @@ from typing import Any, cast
 import pytest
 import requests
 from mcp.types import CallToolRequestParams, CallToolResult, TextContent
-from test_canary_regressions import FakeResponse as BaseResponse, _bare_client
+from test_canary_regressions import FakeResponse as BaseResponse
+from test_canary_regressions import _bare_client
 
 from cloudtalk_mcp import server
 from cloudtalk_mcp.client import CloudTalkClient
 from cloudtalk_mcp.errors import MissingCredentialsError
-
 
 PII = "Private Person private@example.test secret-token-value"
 
@@ -248,22 +248,22 @@ def test_transport_failures_distinguish_read_and_write(method, write, error_type
     assert PII not in str(raised.value)
 
 
-def test_string_path_ids_are_escaped(monkeypatch):
+def test_string_path_ids_are_validated(monkeypatch):
     urls = []
     client = _bare_client(FakeResponse(200, {}))
     cast(Any, client.session).request = lambda method, url, **kwargs: (
         urls.append(url) or FakeResponse(200, {})
     )
-    client.get_contact("../x")
-    client.update_contact("../x", first_name="A")
-    client.delete_contact("../x")
-    client.get_call("../x")
+    client.get_contact("normal-id")
+    client.update_contact("normal-id", first_name="A")
+    client.delete_contact("normal-id")
+    client.get_call("normal-id")
     assert all("../x" not in url for url in urls)
     assert urls == [
-        "https://my.cloudtalk.io/api/contacts/show/..%2Fx.json",
-        "https://my.cloudtalk.io/api/contacts/edit/..%2Fx.json",
-        "https://my.cloudtalk.io/api/contacts/delete/..%2Fx.json",
-        "https://analytics-api.cloudtalk.io/api/calls/..%2Fx",
+        "https://my.cloudtalk.io/api/contacts/show/normal-id.json",
+        "https://my.cloudtalk.io/api/contacts/edit/normal-id.json",
+        "https://my.cloudtalk.io/api/contacts/delete/normal-id.json",
+        "https://analytics-api.cloudtalk.io/api/calls/normal-id",
     ]
 
 

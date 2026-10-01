@@ -14,13 +14,23 @@ from mcp.server.mcpserver.exceptions import (
 )
 from mcp.shared.exceptions import MCPError
 from mcp.types import CallToolResult, TextContent
-from pydantic import ValidationError
-from pydantic import Field
+from pydantic import BeforeValidator, Field, ValidationError
 
 from .client import CloudTalkClient
 from .errors import CloudTalkToolError, ResourceReadError
 
 logger = logging.getLogger(__name__)
+
+
+def _reject_boolean_path_id(value):
+    """Reject booleans before integer coercion; preserve all other SDK inputs."""
+    if isinstance(value, bool):
+        raise ValueError("Use an integer identifier, not a boolean.")
+    return value
+
+
+# A before-validator preserves the existing integer JSON schema and coercions.
+PathId = Annotated[int, BeforeValidator(_reject_boolean_path_id)]
 
 
 class SafeMCPServer(MCPServer):
@@ -191,7 +201,7 @@ def list_calls(
 
 
 @mcp.tool()
-def get_call(call_id: int) -> dict:
+def get_call(call_id: PathId) -> dict:
     """Get comprehensive details for a specific call including recording, flow, and notes.
 
     Args:
@@ -236,7 +246,7 @@ def list_contacts(
 
 
 @mcp.tool()
-def get_contact(contact_id: int) -> dict:
+def get_contact(contact_id: PathId) -> dict:
     """Get details for a specific contact.
 
     Args:
@@ -267,7 +277,7 @@ def create_contact(
 
 @mcp.tool()
 def update_contact(
-    contact_id: int,
+    contact_id: PathId,
     first_name: str = "",
     last_name: str = "",
     phone: str = "",
@@ -292,7 +302,7 @@ def update_contact(
 
 
 @mcp.tool()
-def delete_contact(contact_id: int) -> dict:
+def delete_contact(contact_id: PathId) -> dict:
     """Delete a contact from CloudTalk.
 
     Args:
