@@ -1,50 +1,138 @@
 #!/usr/bin/env python3
 import base64
+import logging
+import math
 import os
-import sys
-import time
+import re
 from typing import Any
+from urllib.parse import quote
 
 import requests
 
 from cloudtalk_mcp import credentials
+from cloudtalk_mcp.errors import (
+    AuthorizationError,
+    CloudTalkToolError,
+    MissingCredentialsError,
+    NotFoundError,
+    PermissionDeniedError,
+    RateLimitError,
+    TransportError,
+    UpstreamHTTPError,
+    UpstreamResponseError,
+)
 
 BASE_URL = "https://my.cloudtalk.io/api"
 ANALYTICS_BASE_URL = "https://analytics-api.cloudtalk.io/api"
-
-# Resolve credentials through the pluggable store (OS keyring -> .env file).
-credentials.load_into_environ(["CLOUDTALK_KEY_ID", "CLOUDTALK_KEY_SECRET"])
+logger = logging.getLogger(__name__)
 
 
-def _retry_after_seconds(resp, default=10):
+def _retry_hint(resp, default=10):
     try:
-        return int(resp.headers.get("Retry-After", default))
-    except (TypeError, ValueError):
-        return default
+        raw = resp.headers.get("Retry-After", default)
+        numeric = float(raw)
+        if not math.isfinite(numeric) or numeric <= 0:
+            raise ValueError
+        seconds = math.ceil(numeric)
+        return f"Retry after {seconds} seconds."
+    except (TypeError, ValueError, OverflowError):
+        pass
+    return "Retry after a short delay."
+
+
+_SAFE_VENDOR_REASONS = {
+    "invalid_request": "invalid request",
+    "not_found": "record not found",
+    "permission_denied": "permission denied",
+    "unauthorized": "authorization rejected",
+    "rate_limit_exceeded": "rate limit exceeded",
+    "validation_error": "request validation failed",
+    "internal_error": "upstream service error",
+    "service_unavailable": "service unavailable",
+}
+
+
+def _safe_vendor_reason(resp) -> str:
+    """Return only a fixed generic reason from a deliberately small allowlist."""
+    try:
+        payload = resp.json()
+    except ValueError:
+        return "request rejected"
+    if not isinstance(payload, dict):
+        return "request rejected"
+    candidates = [payload.get("code"), payload.get("error")]
+    nested = payload.get("responseData")
+    if isinstance(nested, dict):
+        candidates.extend([nested.get("code"), nested.get("error")])
+    for value in candidates:
+        if isinstance(value, str) and value in _SAFE_VENDOR_REASONS:
+            return _SAFE_VENDOR_REASONS[value]
+    return "request rejected"
 
 
 def _json_response(resp):
     try:
         return resp.json()
     except ValueError:
-        raise RuntimeError(
-            f"CloudTalk API returned non-JSON ({resp.status_code}): {resp.text[:200]}"
+        logger.warning(
+            "cloudtalk_request_rejected reason=upstream_non_json status_code=%s",
+            resp.status_code,
         )
+        raise UpstreamResponseError() from None
+
+
+def _cap_response_data(response: Any, limit: int) -> Any:
+    """Defensively cap a list response even if the upstream API over-returns."""
+    if not isinstance(response, dict):
+        return response
+
+    response_data = response.get("responseData")
+    if isinstance(response_data, dict) and isinstance(response_data.get("data"), list):
+        capped_response = dict(response)
+        capped_data = dict(response_data)
+        capped_data["data"] = response_data["data"][:limit]
+        capped_response["responseData"] = capped_data
+        return capped_response
+
+    if isinstance(response.get("data"), list):
+        capped_response = dict(response)
+        capped_response["data"] = response["data"][:limit]
+        return capped_response
+    return response
+
+
+def _path_id(value, parameter: str) -> str:
+    """Validate a plain identifier before URL quoting or any HTTP request."""
+    expected = (
+        "a non-empty plain identifier (ASCII letters, digits, -, _, ., ~); not . or .."
+    )
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (str, int))
+        or str(value) in {".", ".."}
+        or re.fullmatch(r"[A-Za-z0-9._~-]+", str(value)) is None
+    ):
+        message = f"Invalid argument '{parameter}': use {expected}."
+        raise CloudTalkToolError(message)
+    return quote(str(value), safe="")
 
 
 class CloudTalkClient:
     def __init__(self):
+        # Resolve only when a client is needed; importing the MCP server must not
+        # consult keyring or the fallback credential file.
+        credentials.load_into_environ(["CLOUDTALK_KEY_ID", "CLOUDTALK_KEY_SECRET"])
         key_id = os.environ.get("CLOUDTALK_KEY_ID", "")
         key_secret = os.environ.get("CLOUDTALK_KEY_SECRET", "")
         if not key_id or not key_secret:
-            raise RuntimeError(
-                "CloudTalk credentials not found. Run: cloudtalk-mcp-setup"
-            )
-        credentials = base64.b64encode(f"{key_id}:{key_secret}".encode()).decode()
+            logger.warning("cloudtalk_request_rejected reason=credentials_missing")
+            raise MissingCredentialsError() from None
+        basic_auth = base64.b64encode(f"{key_id}:{key_secret}".encode()).decode()
         self.session = requests.Session()
+        self.timeout = 30
         self.session.headers.update(
             {
-                "Authorization": f"Basic {credentials}",
+                "Authorization": f"Basic {basic_auth}",
                 "Content-Type": "application/json",
                 "Accept": "application/json",
             }
@@ -67,30 +155,54 @@ class CloudTalkClient:
         url: str,
         params: dict[str, Any] | None = None,
         json_body: Any = None,
-        _rate_retries: int = 0,
     ) -> Any:
-        resp = self.session.request(method, url, params=params, json=json_body)
-        if resp.status_code == 401:
-            raise RuntimeError(
-                "CloudTalk credentials invalid. Run: cloudtalk-mcp-setup"
-            )
-        if resp.status_code == 429 and _rate_retries < 3:
-            wait = _retry_after_seconds(resp)
-            print(f"Rate limited. Waiting {wait}s...", file=sys.stderr)
-            time.sleep(wait)
-            return self._request(
+        try:
+            resp = self.session.request(
                 method,
                 url,
                 params=params,
-                json_body=json_body,
-                _rate_retries=_rate_retries + 1,
+                json=json_body,
+                timeout=getattr(self, "timeout", 30),
+                allow_redirects=False,
             )
+        except requests.RequestException:
+            logger.warning(
+                "cloudtalk_request_rejected reason=transport_error",
+            )
+            raise TransportError(
+                write=method.upper() not in {"GET", "HEAD", "OPTIONS"}
+            ) from None
+        if resp.status_code == 401:
+            logger.warning(
+                "cloudtalk_request_rejected reason=upstream_unauthorized status_code=%s",
+                resp.status_code,
+            )
+            raise AuthorizationError() from None
+        if resp.status_code == 403:
+            logger.warning(
+                "cloudtalk_request_rejected reason=permission_denied status_code=403"
+            )
+            raise PermissionDeniedError() from None
+        if resp.status_code == 404:
+            raise NotFoundError() from None
+        if resp.status_code == 429:
+            raise RateLimitError(_retry_hint(resp)) from None
+        if 300 <= resp.status_code < 400:
+            logger.warning(
+                "cloudtalk_request_rejected reason=unexpected_redirect status_code=%s",
+                resp.status_code,
+            )
+            raise UpstreamHTTPError(resp.status_code, "unexpected redirect") from None
         if resp.status_code == 204:
             return {"success": True}
         if not resp.ok:
-            raise RuntimeError(
-                f"CloudTalk API error {resp.status_code}: {resp.text[:400]}"
+            reason = _safe_vendor_reason(resp)
+            logger.warning(
+                "cloudtalk_request_rejected reason=upstream_error status_code=%s vendor_reason=%s",
+                resp.status_code,
+                reason,
             )
+            raise UpstreamHTTPError(resp.status_code, reason) from None
         return _json_response(resp)
 
     def get(self, path: str, params: dict[str, Any] | None = None) -> Any:
@@ -124,7 +236,8 @@ class CloudTalkClient:
     # --- Agents ---
 
     def list_agents(self, page=1, limit=25):
-        return self.get("/agents/index", params={"page": page, "limit": limit})
+        response = self.get("/agents/index", params={"page": page, "limit": limit})
+        return _cap_response_data(response, limit)
 
     # --- Calls ---
 
@@ -136,11 +249,12 @@ class CloudTalkClient:
             params["date_to"] = date_to
         if status:
             params["status"] = status
-        return self.get("/calls/index", params=params)
+        response = self.get("/calls/index", params=params)
+        return _cap_response_data(response, limit)
 
     def get_call(self, call_id):
         """Get comprehensive call details from the analytics API."""
-        url = self._analytics_url(f"calls/{call_id}")
+        url = self._analytics_url(f"calls/{_path_id(call_id, 'call_id')}")
         return self._request("GET", url)
 
     def initiate_call(self, agent_id, callee_number):
@@ -153,10 +267,11 @@ class CloudTalkClient:
         params: dict[str, Any] = {"page": page, "limit": limit}
         if query:
             params["keyword"] = query
-        return self.get("/contacts/index", params=params)
+        response = self.get("/contacts/index", params=params)
+        return _cap_response_data(response, limit)
 
     def get_contact(self, contact_id):
-        return self.get(f"/contacts/show/{contact_id}")
+        return self.get(f"/contacts/show/{_path_id(contact_id, 'contact_id')}")
 
     def create_contact(self, first_name, last_name="", phone="", email=""):
         # API requires a single `name` field; phone/email are array sub-objects.
@@ -182,15 +297,18 @@ class CloudTalkClient:
             body["ContactEmail"] = [{"email": email}]
         if not body:
             return {"success": True, "message": "No fields to update"}
-        return self.post(f"/contacts/edit/{contact_id}", body=body)
+        return self.post(
+            f"/contacts/edit/{_path_id(contact_id, 'contact_id')}", body=body
+        )
 
     def delete_contact(self, contact_id):
-        return self.delete(f"/contacts/delete/{contact_id}")
+        return self.delete(f"/contacts/delete/{_path_id(contact_id, 'contact_id')}")
 
     # --- Numbers ---
 
     def list_numbers(self, page=1, limit=25):
-        return self.get("/numbers/index", params={"page": page, "limit": limit})
+        response = self.get("/numbers/index", params={"page": page, "limit": limit})
+        return _cap_response_data(response, limit)
 
     # --- Statistics ---
 

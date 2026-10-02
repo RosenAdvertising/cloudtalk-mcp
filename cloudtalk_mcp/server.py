@@ -2,11 +2,144 @@
 """CloudTalk MCP server — 12 tools for call center management."""
 
 import json
+import logging
+from typing import Annotated
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
+from mcp.server.mcpserver.exceptions import (
+    ResourceError,
+    ResourceNotFoundError,
+    ToolError,
+    UnexpectedToolError,
+)
+from mcp.shared.exceptions import MCPError
+from mcp.types import CallToolResult, TextContent
+from pydantic import BeforeValidator, Field, ValidationError
+
 from .client import CloudTalkClient
+from .errors import CloudTalkToolError, ResourceReadError
 
-mcp = FastMCP("cloudtalk")
+logger = logging.getLogger(__name__)
+
+
+def _reject_boolean_path_id(value):
+    """Reject booleans before integer coercion; preserve all other SDK inputs."""
+    if isinstance(value, bool):
+        raise ValueError("Use an integer identifier, not a boolean.")
+    return value
+
+
+# A before-validator preserves the existing integer JSON schema and coercions.
+PathId = Annotated[int, BeforeValidator(_reject_boolean_path_id)]
+
+
+class SafeMCPServer(MCPServer):
+    """Keep SDK 2.2.0's tool surface while sanitizing dispatch failures."""
+
+    @staticmethod
+    def _shape(schema: dict) -> str:
+        if "anyOf" in schema:
+            return " or ".join(SafeMCPServer._shape(item) for item in schema["anyOf"])
+        kind = schema.get("type")
+        if isinstance(kind, list):
+            return " or ".join(
+                SafeMCPServer._shape({"type": option}) for option in kind
+            )
+        if kind == "null":
+            return "null"
+        if kind == "integer":
+            minimum, maximum = schema.get("minimum"), schema.get("maximum")
+            if minimum is not None and maximum is not None:
+                return f"an integer from {minimum} to {maximum}"
+            if minimum is not None:
+                return f"an integer of at least {minimum}"
+            return "an integer"
+        if kind == "string":
+            return "a string"
+        if kind == "number":
+            return "a number"
+        if kind == "boolean":
+            return "a boolean"
+        if kind == "array":
+            return "an array"
+        if kind == "object":
+            return "an object"
+        return "the documented value"
+
+    def _safe_validation_message(self, name: str, exc: ValidationError) -> str:
+        tool = self._tool_manager.get_tool(name)
+        schema = tool.fn_metadata.arg_model.model_json_schema() if tool else {}
+        properties = schema.get("properties", {})
+        names: set[str] = set()
+        for error in exc.errors():
+            loc = error.get("loc", ())
+            if loc and isinstance(loc[0], str) and loc[0] in properties:
+                names.add(loc[0])
+        if not names:
+            return f"Error executing tool {name}: Invalid arguments; use the listed parameters."
+        messages = [
+            f"'{param}' must be {self._shape(properties[param])}."
+            for param in sorted(names)
+        ]
+        return f"Error executing tool {name}: Invalid arguments: {' '.join(messages)}"
+
+    async def call_tool(self, name, arguments, context=None):
+        try:
+            return await super().call_tool(name, arguments, context)
+        except Exception as exc:
+            # Inspect only the SDK wrapper's immediate cause. Unknown outer
+            # failures stay masked even when their cause is a classified error.
+            cause = exc.__cause__
+            safe_error = cause if isinstance(cause, CloudTalkToolError) else None
+            validation = cause if isinstance(cause, ValidationError) else None
+            if (
+                isinstance(exc, ToolError)
+                and validation is not None
+                and not isinstance(exc, UnexpectedToolError)
+            ):
+                message = self._safe_validation_message(name, validation)
+                logger.info("tool_call_rejected reason=invalid_arguments")
+            elif (
+                isinstance(exc, ToolError)
+                and safe_error is not None
+                and not isinstance(exc, UnexpectedToolError)
+            ):
+                message = f"Error executing tool {name}: {safe_error}"
+                logger.info("tool_call_rejected reason=expected_failure")
+            else:
+                logger.error("Tool failed reason=unexpected_failure")
+                message = f"Error executing tool {name}"
+            return CallToolResult(
+                content=[TextContent(type="text", text=message)], is_error=True
+            )
+
+    async def read_resource(self, uri, context=None):
+        try:
+            return await super().read_resource(uri, context)
+        except ResourceNotFoundError:
+            raise ResourceNotFoundError("CloudTalk resource was not found.") from None
+        except MCPError:
+            logger.error("resource_read_failed reason=unexpected_failure")
+            raise ResourceError(str(ResourceReadError())) from None
+        except Exception:
+            logger.error("resource_read_failed reason=unexpected_failure")
+            raise ResourceError(str(ResourceReadError())) from None
+
+
+mcp = SafeMCPServer("cloudtalk")
+
+PageNumber = Annotated[
+    int,
+    Field(ge=1, description="One-based CloudTalk API page number."),
+]
+ListLimit = Annotated[
+    int,
+    Field(
+        ge=1,
+        le=100,
+        description="Maximum number of records returned from the selected API page.",
+    ),
+]
 
 
 def _client() -> CloudTalkClient:
@@ -30,8 +163,8 @@ def who_am_i() -> str:
 
 
 @mcp.tool()
-def list_agents(page: int = 1, limit: int = 25) -> dict:
-    """List all agents in the CloudTalk account.
+def list_agents(page: PageNumber = 1, limit: ListLimit = 25) -> dict:
+    """List one page of agents, capped at limit records.
 
     Args:
         page: Page number (default 1).
@@ -47,8 +180,8 @@ def list_agents(page: int = 1, limit: int = 25) -> dict:
 
 @mcp.tool()
 def list_calls(
-    page: int = 1,
-    limit: int = 25,
+    page: PageNumber = 1,
+    limit: ListLimit = 25,
     date_from: str = "",
     date_to: str = "",
     status: str = "",
@@ -57,7 +190,7 @@ def list_calls(
 
     Args:
         page: Page number (default 1).
-        limit: Results per page (default 25).
+        limit: Maximum results returned from this page (default 25, max 100).
         date_from: Filter start date, format YYYY-MM-DD (optional).
         date_to: Filter end date, format YYYY-MM-DD (optional).
         status: Filter by call status e.g. answered, missed, voicemail (optional).
@@ -68,7 +201,7 @@ def list_calls(
 
 
 @mcp.tool()
-def get_call(call_id: int) -> dict:
+def get_call(call_id: PathId) -> dict:
     """Get comprehensive details for a specific call including recording, flow, and notes.
 
     Args:
@@ -97,19 +230,23 @@ def initiate_call(agent_id: int, to_number: str) -> dict:
 
 
 @mcp.tool()
-def list_contacts(page: int = 1, limit: int = 25, query: str = "") -> dict:
-    """List contacts, optionally filtered by a keyword search.
+def list_contacts(
+    page: PageNumber = 1,
+    limit: ListLimit = 25,
+    query: str = "",
+) -> dict:
+    """List one page of contacts, capped at limit records.
 
     Args:
         page: Page number (default 1).
-        limit: Results per page (default 25).
+        limit: Maximum results returned from this page (default 25, max 100).
         query: Keyword to filter contacts by name, phone, or email (optional).
     """
     return _client().list_contacts(page=page, limit=limit, query=query)
 
 
 @mcp.tool()
-def get_contact(contact_id: int) -> dict:
+def get_contact(contact_id: PathId) -> dict:
     """Get details for a specific contact.
 
     Args:
@@ -140,7 +277,7 @@ def create_contact(
 
 @mcp.tool()
 def update_contact(
-    contact_id: int,
+    contact_id: PathId,
     first_name: str = "",
     last_name: str = "",
     phone: str = "",
@@ -165,7 +302,7 @@ def update_contact(
 
 
 @mcp.tool()
-def delete_contact(contact_id: int) -> dict:
+def delete_contact(contact_id: PathId) -> dict:
     """Delete a contact from CloudTalk.
 
     Args:
@@ -180,12 +317,12 @@ def delete_contact(contact_id: int) -> dict:
 
 
 @mcp.tool()
-def list_numbers(page: int = 1, limit: int = 25) -> dict:
-    """List all phone numbers assigned to the CloudTalk account.
+def list_numbers(page: PageNumber = 1, limit: ListLimit = 25) -> dict:
+    """List one page of assigned phone numbers, capped at limit records.
 
     Args:
         page: Page number (default 1).
-        limit: Results per page (default 25).
+        limit: Maximum results returned from this page (default 25, max 100).
     """
     return _client().list_numbers(page=page, limit=limit)
 
@@ -212,13 +349,13 @@ def get_call_statistics() -> dict:
 
 @mcp.resource("cloudtalk://numbers", mime_type="application/json")
 def numbers_resource() -> str:
-    """All phone numbers assigned to this CloudTalk account — read-only reference data."""
+    """Up to 100 assigned phone numbers — read-only reference data."""
     return json.dumps(_client().list_numbers(limit=100), indent=2)
 
 
 @mcp.resource("cloudtalk://agents", mime_type="application/json")
 def agents_resource() -> str:
-    """All agents in this CloudTalk account — read-only reference data."""
+    """Up to 100 agents in this account — read-only reference data."""
     return json.dumps(_client().list_agents(limit=100), indent=2)
 
 
@@ -227,9 +364,12 @@ def security_notes_resource() -> str:
     """Security posture for cloudtalk-mcp.
 
     ## Credentials
-    - **CLOUDTALK_API_KEY**: CloudTalk REST API key (Bearer token).
-    - Resolution order: OS keyring (macOS Keychain / libsecret) → process env →
-      `~/.cloudtalk-mcp/.env` (chmod 0600 fallback). Set via `cloudtalk-mcp-setup`.
+    - **CLOUDTALK_KEY_ID** and **CLOUDTALK_KEY_SECRET**: CloudTalk API
+      credentials sent using HTTP Basic authentication.
+    - Resolution order: process environment → OS keyring →
+      `~/.cloudtalk-mcp/.env` (0600 fallback). Set via `cloudtalk-mcp-setup`.
+      Restart the MCP server after changing credentials already loaded by its
+      process.
 
     ## Tool classification
     - **Read-only (safe):** who_am_i, list_agents, list_calls, get_call,

@@ -8,12 +8,14 @@
 
 MCP server for CloudTalk — call center management, agents, contacts, and analytics for law firms.
 
+Requires Python MCP SDK >=2.2,<3; protocol revision 2026-07-28 is checked separately.
+
 ## Tools (12)
 
 | Tool                  | Description                                         |
 | --------------------- | --------------------------------------------------- |
 | `who_am_i`            | Return identity of the connected CloudTalk account  |
-| `list_agents`         | List all agents                                     |
+| `list_agents`         | List one page of agents                             |
 | `list_calls`          | List calls with date/status filters                 |
 | `get_call`            | Get comprehensive call details including recording  |
 | `initiate_call`       | Place an outbound call from an agent                |
@@ -45,17 +47,21 @@ via the cross-platform [`keyring`](https://github.com/jaraco/keyring) library:
 | Windows | Credential Manager                       |
 | Linux   | Secret Service (GNOME Keyring / KWallet) |
 
-Secrets are saved under the service name `cloudtalk-mcp`. Nothing is written to
-disk in clear text.
+Secrets are saved under the service name `cloudtalk-mcp` when a usable keyring
+is available.
 
 **File fallback.** On a host with no keyring backend (e.g. a headless Linux box
 without Secret Service), or if you set `CLOUDTALK_MCP_USE_KEYRING=0`, credentials
 fall back to a `~/.cloudtalk-mcp/.env` file with `0600` permissions.
 
-**Read order.** Credentials resolve in the order OS keyring → process environment
-→ `.env` file. So a rotated secret in the keyring always wins, and a
-`CLOUDTALK_KEY_ID` / `CLOUDTALK_KEY_SECRET` exported in your shell overrides the
-file fallback without touching the keyring.
+On Windows, the file is stored in the user's profile and protected by Windows'
+default per-user access rules. On POSIX, files are created with `0600` permissions
+and writes fail closed if private permissions cannot be established.
+
+**Read order.** A credential already present in the server process environment
+takes precedence. Otherwise the client checks the OS keyring, then the `.env`
+file. If you change credentials after the server has loaded them, restart the
+MCP server to reload the new values.
 
 **Pluggable backend.** `keyring` lets you point at any secret store. For example,
 install [`keyrings.cryptfile`](https://pypi.org/project/keyrings.cryptfile/) for

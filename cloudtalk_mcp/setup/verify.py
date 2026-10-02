@@ -3,27 +3,24 @@
 
 import sys
 from cloudtalk_mcp.client import CloudTalkClient
+from cloudtalk_mcp.errors import CloudTalkToolError
 
 
 def run_verify():
     client = CloudTalkClient()
     result = client.who_am_i()
     print("Connection successful.")
-    if isinstance(result, dict):
-        name = result.get("name") or result.get("account_name") or result.get("company")
-        if name:
-            print(f"Account: {name}")
     return result
 
 
 def main():
     try:
         run_verify()
-    except RuntimeError as exc:
+    except CloudTalkToolError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
-    except Exception as exc:
-        print(f"Unexpected error: {exc}", file=sys.stderr)
+    except Exception:
+        print("Unexpected error during verification.", file=sys.stderr)
         sys.exit(1)
 
 

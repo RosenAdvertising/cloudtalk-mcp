@@ -3,6 +3,7 @@
 
 import os
 import sys
+from getpass import getpass
 
 from cloudtalk_mcp import credentials
 
@@ -13,12 +14,20 @@ def main():
     print("Find your credentials at: app.cloudtalk.io → Settings → API")
     print()
 
-    key_id = input("Key ID: ").strip()
+    try:
+        key_id = input("Key ID: ").strip()
+    except EOFError:
+        print("Error: Key ID is required.", file=sys.stderr)
+        sys.exit(1)
     if not key_id:
         print("Error: Key ID cannot be empty.", file=sys.stderr)
         sys.exit(1)
 
-    key_secret = input("Key Secret: ").strip()
+    try:
+        key_secret = getpass("Key Secret: ").strip()
+    except EOFError:
+        print("Error: Key Secret is required.", file=sys.stderr)
+        sys.exit(1)
     if not key_secret:
         print("Error: Key Secret cannot be empty.", file=sys.stderr)
         sys.exit(1)
@@ -43,8 +52,15 @@ def main():
 
         run_verify()
     except Exception as exc:
-        print(f"Verification failed: {exc}", file=sys.stderr)
-        print("Check your credentials and try again.", file=sys.stderr)
+        from cloudtalk_mcp.errors import CloudTalkToolError
+
+        if isinstance(exc, CloudTalkToolError):
+            print(f"Verification failed: {exc}", file=sys.stderr)
+        else:
+            print(
+                "Verification failed. Check your credentials and try again.",
+                file=sys.stderr,
+            )
         sys.exit(1)
 
 
