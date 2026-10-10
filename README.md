@@ -8,7 +8,7 @@
 
 MCP server for CloudTalk — call center management, agents, contacts, and analytics for law firms.
 
-Requires Python MCP SDK >=2.2,<3; protocol revision 2026-07-28 is checked separately.
+Requires Python MCP SDK >=2.3,<3; protocol revision 2026-07-28 is checked separately.
 
 ## Tools (12)
 
@@ -86,6 +86,26 @@ cloudtalk-mcp-verify
   }
 }
 ```
+
+## HTTP mode
+
+Stdio stays the default. Set `CLOUDTALK_MCP_TRANSPORT=streamable-http` to serve one stateless endpoint at `/mcp`. Credentials are the same variables the stdio server already reads (`CLOUDTALK_KEY_ID` and `CLOUDTALK_KEY_SECRET`, via the environment, the OS keyring, or the file fallback). They are never taken from the HTTP request.
+
+| Variable | Purpose |
+| --- | --- |
+| `CLOUDTALK_MCP_TRANSPORT` | `stdio` (default) or `streamable-http` |
+| `CLOUDTALK_MCP_HOST` | Bind address. Default `127.0.0.1` |
+| `PORT` | Bind port. Default `8080`. Must be an integer |
+| `CLOUDTALK_MCP_ALLOWED_HOSTS` | Comma-separated allowed `Host` values. Required when `CLOUDTALK_MCP_HOST` is not loopback (`127.0.0.1`, `localhost`, or `::1`) |
+| `CLOUDTALK_MCP_ALLOWED_ORIGINS` | Optional comma-separated allowed `Origin` values, used with the allowed hosts when the bind address is not loopback |
+| `CLOUDTALK_KEY_ID` | CloudTalk API key id |
+| `CLOUDTALK_KEY_SECRET` | CloudTalk API key secret |
+
+```bash
+CLOUDTALK_MCP_TRANSPORT=streamable-http PORT=8080 cloudtalk-mcp
+```
+
+That listens on `http://127.0.0.1:8080/mcp`.
 
 ## Auth
 

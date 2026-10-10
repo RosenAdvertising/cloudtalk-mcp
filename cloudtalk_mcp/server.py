@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """CloudTalk MCP server — 12 tools for call center management."""
 
+import asyncio
 import json
 import logging
+import os
 from typing import Annotated
 
 from mcp.server import MCPServer
@@ -12,10 +14,12 @@ from mcp.server.mcpserver.exceptions import (
     ToolError,
     UnexpectedToolError,
 )
+from mcp.server.transport_security import TransportSecuritySettings
 from mcp.shared.exceptions import MCPError
 from mcp.types import CallToolResult, TextContent
 from pydantic import BeforeValidator, Field, ValidationError
 
+from . import __version__
 from .client import CloudTalkClient
 from .errors import CloudTalkToolError, ResourceReadError
 
@@ -126,7 +130,7 @@ class SafeMCPServer(MCPServer):
             raise ResourceError(str(ResourceReadError())) from None
 
 
-mcp = SafeMCPServer("cloudtalk")
+mcp = SafeMCPServer(name="cloudtalk", title="CloudTalk", version=__version__)
 
 PageNumber = Annotated[
     int,
@@ -436,8 +440,85 @@ def agent_performance_brief() -> str:
 # ---------------------------------------------------------------------------
 
 
+STREAMABLE_HTTP_TRANSPORT = "streamable-http"
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def _requested_transport() -> str:
+    return os.environ.get("CLOUDTALK_MCP_TRANSPORT", "stdio").strip().lower() or "stdio"
+
+
+def _host() -> str:
+    return os.environ.get("CLOUDTALK_MCP_HOST", "127.0.0.1").strip() or "127.0.0.1"
+
+
+def _port() -> int:
+    raw = os.environ.get("PORT", "8080").strip()
+    try:
+        return int(raw)
+    except ValueError:
+        raise SystemExit(f"PORT must be an integer, got {raw!r}") from None
+
+
+def _csv_env(name: str) -> list[str]:
+    return [
+        item.strip() for item in os.environ.get(name, "").split(",") if item.strip()
+    ]
+
+
+def _transport_security() -> TransportSecuritySettings | None:
+    """Origin validation is required off loopback. The SDK covers loopback."""
+    host = _host()
+    if host in _LOOPBACK_HOSTS:
+        return None
+    allowed_hosts = _csv_env("CLOUDTALK_MCP_ALLOWED_HOSTS")
+    if not allowed_hosts:
+        raise SystemExit(
+            "CLOUDTALK_MCP_ALLOWED_HOSTS is required when CLOUDTALK_MCP_HOST "
+            f"is {host!r}. Set CLOUDTALK_MCP_ALLOWED_HOSTS to a comma-separated "
+            "list of allowed Host header values."
+        )
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=allowed_hosts,
+        allowed_origins=_csv_env("CLOUDTALK_MCP_ALLOWED_ORIGINS"),
+    )
+
+
+def create_serve_app():
+    """Stateless Streamable HTTP app. SSE stays the SDK default so disconnects cancel."""
+    return mcp.streamable_http_app(
+        streamable_http_path="/mcp",
+        host=_host(),
+        stateless_http=True,
+        transport_security=_transport_security(),
+    )
+
+
+async def _serve_streamable_http() -> None:
+    import uvicorn
+
+    config = uvicorn.Config(
+        create_serve_app(),
+        host=_host(),
+        port=_port(),
+        access_log=False,
+    )
+    await uvicorn.Server(config).serve()
+
+
 def main():
-    mcp.run()
+    transport = _requested_transport()
+    if transport == "stdio":
+        mcp.run()
+        return
+    if transport == STREAMABLE_HTTP_TRANSPORT:
+        asyncio.run(_serve_streamable_http())
+        return
+    raise SystemExit(
+        "Unsupported CLOUDTALK_MCP_TRANSPORT "
+        f"{transport!r}; expected 'stdio' or '{STREAMABLE_HTTP_TRANSPORT}'."
+    )
 
 
 if __name__ == "__main__":
