@@ -91,6 +91,8 @@ cloudtalk-mcp-verify
 
 Stdio stays the default. Set `CLOUDTALK_MCP_TRANSPORT=streamable-http` to serve one stateless endpoint at `/mcp`. Credentials are the same variables the stdio server already reads (`CLOUDTALK_KEY_ID` and `CLOUDTALK_KEY_SECRET`, via the environment, the OS keyring, or the file fallback). They are never taken from the HTTP request.
 
+> **Security: this endpoint has no authentication and no TLS.** Anyone who can reach the port can run every tool, including write and delete tools, with this server's vendor credentials. Keep the default loopback bind (`127.0.0.1`), or put the server behind an authenticating TLS proxy on a private network. `CLOUDTALK_MCP_ALLOWED_HOSTS` and `CLOUDTALK_MCP_ALLOWED_ORIGINS` protect against browser DNS rebinding, not against direct callers. A proxy in front of it needs connection and idle timeouts: a legacy-style `GET /mcp` with `Accept: text/event-stream` holds a stream open until the client disconnects.
+
 | Variable | Purpose |
 | --- | --- |
 | `CLOUDTALK_MCP_TRANSPORT` | `stdio` (default) or `streamable-http` |

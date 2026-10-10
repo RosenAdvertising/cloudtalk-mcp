@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import contextlib
+import importlib.metadata
 import json
+import sys
 from typing import Any
 
 import httpx2 as httpx
@@ -260,3 +262,60 @@ async def test_stateless_lifespan_runs_once(monkeypatch) -> None:
     assert first.status_code == 200
     assert second.status_code == 200
     assert entered["count"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Spec v1 security-review regressions (empty env values, host spelling, import)
+# ---------------------------------------------------------------------------
+
+
+def test_empty_transport_selects_stdio(monkeypatch) -> None:
+    monkeypatch.setenv("CLOUDTALK_MCP_TRANSPORT", "")
+    assert server._requested_transport() == "stdio"
+    monkeypatch.setenv("CLOUDTALK_MCP_TRANSPORT", "   ")
+    assert server._requested_transport() == "stdio"
+
+    ran = {"stdio": False}
+
+    def run_stdio() -> None:
+        ran["stdio"] = True
+
+    monkeypatch.setattr(server.mcp, "run", run_stdio)
+    monkeypatch.setenv("CLOUDTALK_MCP_TRANSPORT", "")
+    server.main()
+    assert ran["stdio"] is True
+
+
+def test_empty_host_yields_loopback_default(monkeypatch) -> None:
+    monkeypatch.setenv("CLOUDTALK_MCP_HOST", "")
+    assert server._host() == "127.0.0.1"
+    monkeypatch.setenv("CLOUDTALK_MCP_HOST", "   ")
+    assert server._host() == "127.0.0.1"
+
+
+def test_uppercase_localhost_exits_without_allowed_hosts(monkeypatch) -> None:
+    monkeypatch.setenv("CLOUDTALK_MCP_HOST", "LOCALHOST")
+    monkeypatch.delenv("CLOUDTALK_MCP_ALLOWED_HOSTS", raising=False)
+    assert server._host() == "LOCALHOST"
+    with pytest.raises(SystemExit) as exc:
+        server.create_serve_app()
+    assert "CLOUDTALK_MCP_ALLOWED_HOSTS" in str(exc.value)
+
+
+def test_server_import_succeeds_when_distribution_is_missing(monkeypatch) -> None:
+    """A fresh import must survive absent distribution metadata (review F8)."""
+
+    def _missing(name):
+        raise importlib.metadata.PackageNotFoundError(name)
+
+    monkeypatch.setattr(importlib.metadata, "version", _missing)
+    saved_server = sys.modules.pop("cloudtalk_mcp.server", None)
+    saved_package = sys.modules.pop("cloudtalk_mcp", None)
+    try:
+        imported = importlib.import_module("cloudtalk_mcp.server")
+        assert isinstance(imported.__version__, str) and imported.__version__
+    finally:
+        if saved_package is not None:
+            sys.modules["cloudtalk_mcp"] = saved_package
+        if saved_server is not None:
+            sys.modules["cloudtalk_mcp.server"] = saved_server
